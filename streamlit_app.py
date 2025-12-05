@@ -499,7 +499,7 @@ def main():
     st.markdown(f"""
         <div class="acg-footer" role="contentinfo">
             <div>© ACG · Stand: {loaded_at}</div>
-            <div class="acg-muted">Kontakt: it@acg.example (nur intern) · Datenquelle: konfigurierte Excel</div>
+            <div class="acg-muted"> Datenquelle: B2B CDM Daten von 10.-23.11.2025 </div>
         </div>
     """, unsafe_allow_html=True)
 
