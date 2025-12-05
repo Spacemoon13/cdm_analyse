@@ -2,8 +2,6 @@
 venv/
 .venv/
 
-# Streamlit-Konfiguration und Secrets (NICHT hochladen!)
-.streamlit/
 
 # Sonstige IDE-Dateien
 .vscode/
