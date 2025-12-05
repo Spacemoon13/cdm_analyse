@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.signal import savgol_filter
 import streamlit as st
 import io
 import requests
@@ -97,9 +96,15 @@ def smooth(series, window=3):
 # ================================================================
 @st.cache_data
 def load_data():
+    """Lädt die Excel-Datei von der in st.secrets konfigurierten URL.
+    Bei Fehlern wird eine RuntimeError ausgelöst."""
     url = st.secrets["file_links"]["xlsm_url"]
-    resp = requests.get(url)
-    resp.raise_for_status()
+    try:
+        with requests.Session() as s:
+            resp = s.get(url, timeout=30)
+            resp.raise_for_status()
+    except Exception as e:
+        raise RuntimeError(f"Fehler beim Laden der Daten: {e}")
 
     df = pd.read_excel(
         io.BytesIO(resp.content),
@@ -139,24 +144,30 @@ def compute_stats(data, col, limit):
 
 
 def percent_within_window(df, bins, col, window, limit):
-    result = []
-    for b in bins:
-        sub = df[df["bin"] == b]
-        sub = sub[sub[col].between(-limit, limit)]
-        if len(sub) == 0:
-            result.append(np.nan)
-            continue
-        ok = sub[sub[col].between(-window, window)]
-        result.append((len(ok) / len(sub)) * 100)
-    return np.array(result)
+    """Vectorisierte Berechnung: für jeden bin den Anteil (%) von Werten in ±window
+    (nur Werte innerhalb ±limit werden berücksichtigt)."""
+    mask = df[col].between(-limit, limit)
+    sub = df.loc[mask, ["bin", col]].copy()
+    if sub.empty:
+        return np.full(len(bins), np.nan, dtype=float)
+    sub["ok"] = sub[col].between(-window, window)
+    grp = sub.groupby("bin")["ok"].agg(total="size", ok="sum")
+    pct = (grp["ok"] / grp["total"]) * 100
+    # Reindex auf bins, fehlende Bins -> NaN
+    pct_full = pct.reindex(bins).to_numpy(dtype=float)
+    return pct_full
 
 
 # ================================================================
 # Bild laden (ACG Logo)
 # ================================================================
 def load_base64(path):
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
+    """Lädt eine lokale Bilddatei als base64-String; gibt None bei Fehlern zurück."""
+    try:
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except Exception:
+        return None
 
 
 # ================================================================
@@ -187,20 +198,35 @@ def main():
     # ------------------ Header + Logo -------------------
     logo_b64 = load_base64("acg_logo.png")
 
-    st.markdown(f"""
-        <div style="display:flex; align-items:center;
-                    background:#003DA5; padding:20px 30px;
-                    border-radius:12px; margin-bottom:35px;">
-            <img src="data:image/png;base64,{logo_b64}"
-                 style="height:120px; margin-right:30px;">
-            <div style="font-size:40px; font-weight:700; color:white;">
-                CDM Delta Analysis Dashboard
+    if logo_b64:
+        st.markdown(f"""
+            <div style="display:flex; align-items:center;
+                        background:#003DA5; padding:20px 30px;
+                        border-radius:12px; margin-bottom:35px;">
+                <img src="data:image/png;base64,{logo_b64}"
+                     style="height:120px; margin-right:30px;">
+                <div style="font-size:40px; font-weight:700; color:white;">
+                    CDM Delta Analysis Dashboard
+                </div>
             </div>
-        </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+            <div style="display:flex; align-items:center;
+                        background:#003DA5; padding:20px 30px;
+                        border-radius:12px; margin-bottom:35px;">
+                <div style="font-size:40px; font-weight:700; color:white;">
+                    CDM Delta Analysis Dashboard
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
 
     # ------------------ Daten laden ---------------------
-    df = load_data()
+    try:
+        df = load_data()
+    except Exception as e:
+        st.error(f"Daten konnten nicht geladen werden: {e}")
+        return
 
     # ------------------ TIME_MAX Slider -----------------
     with st.container():
