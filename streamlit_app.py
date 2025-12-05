@@ -183,7 +183,7 @@ def main():
     # ------------------ Compact-Modus (Sidebar) ------------------
     compact = st.sidebar.checkbox("Kompaktmodus (mobile)", False)
 
-    # ------------------ Globales Styling (inkl. responsive Header + Footer) ----------------
+    # ------------------ Globales Styling ----------------
     base_css = """
         <style>
             .stApp { background-color: #f5f7fb; }
@@ -244,7 +244,6 @@ def main():
     """
     st.markdown(base_css, unsafe_allow_html=True)
 
-    # Compact overrides (if user toggles)
     if compact:
         st.markdown("""
             <style>
@@ -255,7 +254,7 @@ def main():
             </style>
         """, unsafe_allow_html=True)
 
-    # ------------------ Header + Logo (responsive: desktop + mobile image) -------------------
+    # ------------------ Header + Logo -------------------
     logo_b64 = load_base64("acg_logo.png")
     logo_small_b64 = load_base64("acg_logo_small.png")
 
@@ -304,6 +303,11 @@ def main():
     ctot_counts = ctot_stats["count"].reindex(etot_stats.index).fillna(0)
     atc_counts  = atc_stats["count"].reindex(etot_stats.index).fillna(0)
 
+    # --- Gesamt-n je Serie (für Textfelder / Panels) ---
+    total_etot = int(etot_counts.sum())
+    total_ctot = int(ctot_counts.sum())
+    total_atc  = int(atc_counts.sum())
+
     ratio_ctot = (ctot_counts / etot_counts.replace(0, np.nan)) * 100
     ratio_atc = (atc_counts / etot_counts.replace(0, np.nan)) * 100
 
@@ -323,6 +327,10 @@ def main():
     # ================================================================
     st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
     st.subheader("Panel 1 – Mean-Verläufe ETOT / CTOT / ATC-TTOT")
+    st.markdown(
+        f'<p class="acg-muted">Datenbasis: ETOT n={total_etot}, CTOT n={total_ctot}, ATC-TTOT n={total_atc}</p>',
+        unsafe_allow_html=True,
+    )
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -339,7 +347,7 @@ def main():
         ax1.plot(
             etot_stats.index[valid],
             smooth(etot_stats.loc[valid, "mean"]),
-            marker="o", linewidth=2, color=colors["etot"], label="ETOT"
+            marker="o", linewidth=2, color=colors["etot"], label=f"ETOT (n={total_etot})"
         )
 
     if s_ctot:
@@ -347,7 +355,7 @@ def main():
         ax1.plot(
             ctot_stats.index[valid],
             smooth(ctot_stats.loc[valid, "mean"]),
-            marker="o", linewidth=2, color=colors["ctot"], label="CTOT"
+            marker="o", linewidth=2, color=colors["ctot"], label=f"CTOT (n={total_ctot})"
         )
 
     if s_atc:
@@ -355,7 +363,7 @@ def main():
         ax1.plot(
             atc_stats.index[valid],
             smooth(atc_stats.loc[valid, "mean"]),
-            marker="o", linewidth=2, color=colors["atc"], label="ATC-TTOT"
+            marker="o", linewidth=2, color=colors["atc"], label=f"ATC-TTOT (n={total_atc})"
         )
 
     ax1.grid(True)
@@ -371,6 +379,10 @@ def main():
     # ================================================================
     st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
     st.subheader("Panel 2 – Stabilität (± Zeitfenster)")
+    st.markdown(
+        f'<p class="acg-muted">Datenbasis: ETOT n={total_etot}, CTOT n={total_ctot}, ATC-TTOT n={total_atc}</p>',
+        unsafe_allow_html=True,
+    )
 
     window = st.slider("Fenster (± Minuten)", 1, 15, 3)
 
@@ -381,9 +393,9 @@ def main():
 
     fig2, ax2 = plt.subplots(figsize=(fig_w, fig_h))
 
-    ax2.plot(bins, pct_etot, marker="o", color=colors["etot"], label="ETOT")
-    ax2.plot(bins, pct_ctot, marker="o", color=colors["ctot"], label="CTOT")
-    ax2.plot(bins, pct_atc, marker="o", color=colors["atc"], label="ATC-TTOT")
+    ax2.plot(bins, pct_etot, marker="o", color=colors["etot"], label=f"ETOT (n={total_etot})")
+    ax2.plot(bins, pct_ctot, marker="o", color=colors["ctot"], label=f"CTOT (n={total_ctot})")
+    ax2.plot(bins, pct_atc, marker="o", color=colors["atc"], label=f"ATC-TTOT (n={total_atc})")
 
     ax2.set_ylim(0, 100)
     ax2.grid(True)
@@ -409,6 +421,9 @@ def main():
     fig3, ax3 = plt.subplots(figsize=(fig_w, fig_h))
     cat_grp = df_etot.groupby(["bin", "AirlineCategory"])["Delta - ETOT (min)"].mean()
 
+    # n je Airline-Kategorie (gesamt im gefilterten Datensatz)
+    cat_counts = df_etot.groupby("AirlineCategory")["Delta - ETOT (min)"].count()
+
     for cat in CATEGORIES_OF_INTEREST:
         if not show_cat[cat]:
             continue
@@ -416,12 +431,13 @@ def main():
             continue
 
         series = cat_grp.xs(cat, level="AirlineCategory").sort_index()
+        n_cat = int(cat_counts.get(cat, 0))
         ax3.plot(
             series.index,
             smooth(series),
             marker="o",
             linewidth=2,
-            label=cat
+            label=f"{cat} (n={n_cat})"
         )
 
     ax3.grid(True)
@@ -447,13 +463,23 @@ def main():
     fig4, ax4 = plt.subplots(figsize=(fig_w, fig_h))
     rw_grp = df_etot.groupby(["bin", "Runway"])["Delta - ETOT (min)"].mean()
 
+    # n je Runway (gesamt im gefilterten Datensatz)
+    rw_counts = df_etot.groupby("Runway")["Delta - ETOT (min)"].count()
+
     for rw in RUNWAYS_OF_INTEREST:
         if not show_rw[rw]:
             continue
         if rw not in rw_grp.index.get_level_values(1):
             continue
-        series = rw_grp.xs(rw, level="Runway")
-        ax4.plot(series.index, smooth(series), marker="o", linewidth=2, label=f"RWY {rw}")
+        series = rw_grp.xs(rw, level="Runway").sort_index()
+        n_rw = int(rw_counts.get(rw, 0))
+        ax4.plot(
+            series.index,
+            smooth(series),
+            marker="o",
+            linewidth=2,
+            label=f"RWY {rw} (n={n_rw})"
+        )
 
     ax4.grid(True)
     ax4.legend()
