@@ -6,6 +6,7 @@ import streamlit as st
 import io
 import requests
 import base64
+import datetime
 
 # ================================================================
 # Streamlit Grund-Setup
@@ -179,8 +180,11 @@ def main():
     if not check_password():
         return
 
-    # ------------------ Globales Styling ----------------
-    st.markdown("""
+    # ------------------ Compact-Modus (Sidebar) ------------------
+    compact = st.sidebar.checkbox("Kompaktmodus (mobile)", False)
+
+    # ------------------ Globales Styling (inkl. responsive Header + Footer) ----------------
+    base_css = """
         <style>
             .stApp { background-color: #f5f7fb; }
             .acg-panel {
@@ -192,38 +196,90 @@ def main():
                 margin-bottom: 1.2rem;
             }
             .acg-muted { color:#666; font-size:0.85rem; }
+
+            /* Header */
+            .acg-header {
+                display:flex;
+                align-items:center;
+                background:#003DA5;
+                padding:20px 30px;
+                border-radius:12px;
+                margin-bottom:35px;
+                color:white;
+            }
+            .acg-header .title {
+                font-size:40px;
+                font-weight:700;
+                color:white;
+            }
+            .acg-header img.logo-desktop {
+                height:120px;
+                margin-right:30px;
+                display:block;
+            }
+            .acg-header img.logo-mobile {
+                height:72px;
+                margin-bottom:10px;
+                display:none;
+            }
+
+            /* Footer */
+            .acg-footer {
+                text-align:center;
+                color:#666;
+                font-size:0.85rem;
+                padding:12px 0;
+                margin-top:18px;
+                border-top:1px solid #eee;
+            }
+
+            @media (max-width: 600px) {
+                .acg-header { flex-direction: column; padding:12px; }
+                .acg-header .title { font-size:20px; text-align:center; }
+                .acg-header img.logo-desktop { display:none; }
+                .acg-header img.logo-mobile { display:block; }
+                .acg-panel { padding:0.8rem 0.9rem; margin-bottom:0.8rem; }
+            }
         </style>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown(base_css, unsafe_allow_html=True)
 
-    # ------------------ Header + Logo -------------------
+    # Compact overrides (if user toggles)
+    if compact:
+        st.markdown("""
+            <style>
+                .acg-panel { padding: 0.6rem 0.8rem !important; margin-bottom:0.6rem !important; }
+                .acg-header { padding:10px 12px !important; }
+                .acg-header .title { font-size:18px !important; }
+                .acg-header img.logo-desktop { height:70px !important; margin-right:12px !important; }
+            </style>
+        """, unsafe_allow_html=True)
+
+    # ------------------ Header + Logo (responsive: desktop + mobile image) -------------------
     logo_b64 = load_base64("acg_logo.png")
+    logo_small_b64 = load_base64("acg_logo_small.png")
 
-    if logo_b64:
+    if logo_b64 or logo_small_b64:
+        img_desktop = f'<img class="logo-desktop" src="data:image/png;base64,{logo_b64}" alt="logo">' if logo_b64 else ""
+        img_mobile = f'<img class="logo-mobile" src="data:image/png;base64,{logo_small_b64 or logo_b64}" alt="logo">' if (logo_small_b64 or logo_b64) else ""
         st.markdown(f"""
-            <div style="display:flex; align-items:center;
-                        background:#003DA5; padding:20px 30px;
-                        border-radius:12px; margin-bottom:35px;">
-                <img src="data:image/png;base64,{logo_b64}"
-                     style="height:120px; margin-right:30px;">
-                <div style="font-size:40px; font-weight:700; color:white;">
-                    CDM Delta Analysis Dashboard
-                </div>
+            <div class="acg-header" role="banner">
+                {img_desktop}
+                {img_mobile}
+                <div class="title">CDM Delta Analysis Dashboard</div>
             </div>
         """, unsafe_allow_html=True)
     else:
         st.markdown(f"""
-            <div style="display:flex; align-items:center;
-                        background:#003DA5; padding:20px 30px;
-                        border-radius:12px; margin-bottom:35px;">
-                <div style="font-size:40px; font-weight:700; color:white;">
-                    CDM Delta Analysis Dashboard
-                </div>
+            <div class="acg-header" role="banner">
+                <div class="title">CDM Delta Analysis Dashboard</div>
             </div>
         """, unsafe_allow_html=True)
 
     # ------------------ Daten laden ---------------------
     try:
         df = load_data()
+        loaded_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     except Exception as e:
         st.error(f"Daten konnten nicht geladen werden: {e}")
         return
@@ -256,6 +312,12 @@ def main():
         df["Delta - ETOT (min)"].between(-DELTA_LIMIT, DELTA_LIMIT)
     ]
 
+    # figure sizes based on compact mode
+    if compact:
+        fig_w, fig_h = 7, 3.5
+    else:
+        fig_w, fig_h = 10, 5
+
     # ================================================================
     # PANEL 1 – Mean Verläufe
     # ================================================================
@@ -270,7 +332,7 @@ def main():
     with col3:
         s_atc = st.checkbox("ATC-TTOT anzeigen")
 
-    fig1, ax1 = plt.subplots(figsize=(10, 5))
+    fig1, ax1 = plt.subplots(figsize=(fig_w, fig_h))
 
     if s_etot:
         valid = etot_stats["count"] >= MIN_COUNT
@@ -300,7 +362,7 @@ def main():
     ax1.legend()
     ax1.set_xlabel("Min vor ATOT")
     ax1.set_ylabel("Delta (min)")
-
+    fig1.tight_layout()
     st.pyplot(fig1)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -317,7 +379,7 @@ def main():
     pct_ctot = percent_within_window(df, bins, "Delta - CTOT (min)", window, DELTA_LIMIT)
     pct_atc = percent_within_window(df, bins, "Delta - ATC TTOT (min)", window, DELTA_LIMIT)
 
-    fig2, ax2 = plt.subplots(figsize=(10, 5))
+    fig2, ax2 = plt.subplots(figsize=(fig_w, fig_h))
 
     ax2.plot(bins, pct_etot, marker="o", color=colors["etot"], label="ETOT")
     ax2.plot(bins, pct_ctot, marker="o", color=colors["ctot"], label="CTOT")
@@ -328,7 +390,7 @@ def main():
     ax2.legend()
     ax2.set_xlabel("Min vor ATOT")
     ax2.set_ylabel("Anteil (%)")
-
+    fig2.tight_layout()
     st.pyplot(fig2)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -344,7 +406,7 @@ def main():
         with cols[i]:
             show_cat[cat] = st.checkbox(cat, False)
 
-    fig3, ax3 = plt.subplots(figsize=(10, 5))
+    fig3, ax3 = plt.subplots(figsize=(fig_w, fig_h))
     cat_grp = df_etot.groupby(["bin", "AirlineCategory"])["Delta - ETOT (min)"].mean()
 
     for cat in CATEGORIES_OF_INTEREST:
@@ -366,7 +428,7 @@ def main():
     ax3.legend()
     ax3.set_xlabel("Min vor ATOT")
     ax3.set_ylabel("Delta ETOT (min)")
-
+    fig3.tight_layout()
     st.pyplot(fig3)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -382,7 +444,7 @@ def main():
         with cols[i]:
             show_rw[rw] = st.checkbox(f"RWY {rw}", False)
 
-    fig4, ax4 = plt.subplots(figsize=(10, 5))
+    fig4, ax4 = plt.subplots(figsize=(fig_w, fig_h))
     rw_grp = df_etot.groupby(["bin", "Runway"])["Delta - ETOT (min)"].mean()
 
     for rw in RUNWAYS_OF_INTEREST:
@@ -397,7 +459,7 @@ def main():
     ax4.legend()
     ax4.set_xlabel("Min vor ATOT")
     ax4.set_ylabel("Delta ETOT (min)")
-
+    fig4.tight_layout()
     st.pyplot(fig4)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -430,6 +492,16 @@ def main():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # ================================================================
+    # Footer
+    # ================================================================
+    st.markdown(f"""
+        <div class="acg-footer" role="contentinfo">
+            <div>© ACG · Stand: {loaded_at}</div>
+            <div class="acg-muted">Kontakt: it@acg.example (nur intern) · Datenquelle: konfigurierte Excel</div>
+        </div>
+    """, unsafe_allow_html=True)
 
 
 # ================================================================
