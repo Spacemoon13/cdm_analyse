@@ -344,7 +344,7 @@ def main():
         fig_w, fig_h = 10, 5
 
     # ================================================================
-    # PANEL 1 – Mean Verläufe
+    # PANEL 1 – Mean-Verläufe
     # ================================================================
     st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
     st.subheader("Panel 1 – Mean-Verläufe ETOT / CTOT / ATC-TTOT")
@@ -359,13 +359,13 @@ def main():
 
     fig1, ax1 = plt.subplots(figsize=(fig_w, fig_h))
 
+    # --- Linien wie in der aktuellen Version ---
     if s_etot:
         valid = etot_stats["count"] >= MIN_COUNT
         ax1.plot(
             etot_stats.index[valid],
             smooth(etot_stats.loc[valid, "mean"]),
-            marker="o", linewidth=2, color=colors["etot"],
-            label=f"ETOT (n={n0_etot})"
+            marker="o", linewidth=2, color=colors["etot"], label="ETOT"
         )
 
     if s_ctot:
@@ -373,8 +373,7 @@ def main():
         ax1.plot(
             ctot_stats.index[valid],
             smooth(ctot_stats.loc[valid, "mean"]),
-            marker="o", linewidth=2, color=colors["ctot"],
-            label=f"CTOT (n={n0_ctot})"
+            marker="o", linewidth=2, color=colors["ctot"], label="CTOT"
         )
 
     if s_atc:
@@ -382,15 +381,83 @@ def main():
         ax1.plot(
             atc_stats.index[valid],
             smooth(atc_stats.loc[valid, "mean"]),
-            marker="o", linewidth=2, color=colors["atc"],
-            label=f"ATC-TTOT (n={n0_atc})"
+            marker="o", linewidth=2, color=colors["atc"], label="ATC-TTOT"
         )
 
+    # ------------------------------------------------
+    # Info-Box unten rechts (aus der alten Version)
+    # ------------------------------------------------
+    etot_counts_box = etot_stats["count"]
+    ctot_counts_box = ctot_stats["count"].reindex(etot_stats.index).fillna(0)
+    atc_counts_box  = atc_stats["count"].reindex(etot_stats.index).fillna(0)
+
+    ratio_ctot_box = np.where(
+        etot_counts_box > 0, (ctot_counts_box / etot_counts_box) * 100, np.nan
+    )
+    ratio_atc_box = np.where(
+        etot_counts_box > 0, (atc_counts_box / etot_counts_box) * 100, np.nan
+    )
+
+    bins_arr = etot_stats.index.to_numpy()
+
+    valid_ct = ~np.isnan(ratio_ctot_box)
+    ct_start = float(ratio_ctot_box[valid_ct][0]) if valid_ct.any() else np.nan
+    ct_end   = float(ratio_ctot_box[valid_ct][-1]) if valid_ct.any() else np.nan
+
+    valid_at = ~np.isnan(ratio_atc_box)
+    at_start = float(ratio_atc_box[valid_at][0]) if valid_at.any() else np.nan
+
+    thr_bin = None
+    thr_mask = valid_at & (ratio_atc_box < 10)
+    if thr_mask.any():
+        thr_bin = int(bins_arr[thr_mask][0])
+
+    lines = []
+    lines.append("Datenbasis (Anteil Flüge)")
+    lines.append("──────────────────────")
+
+    if not np.isnan(ct_start):
+        lines.append(f"CTOT vorhanden bei {ct_start:.0f}%")
+        lines.append("der Flüge bei ATOT")
+    if not np.isnan(ct_end):
+        lines.append(f"→ ca. {ct_end:.0f}% der Flüge")
+        lines.append(f"bei {int(time_max)} min vor ATOT")
+
+    lines.append("")
+
+    if not np.isnan(at_start):
+        lines.append(f"ATC-TTOT vorhanden bei {at_start:.0f}%")
+        lines.append("der Flüge bei ATOT")
+        if thr_bin is not None:
+            lines.append(f"→ ab ca. {thr_bin} min vor ATOT")
+            lines.append("keine verwertbaren ATC-TTOT mehr")
+
+    textstr = "\n".join(lines)
+
+    props = dict(
+        boxstyle="round,pad=0.6",
+        facecolor="white",
+        edgecolor="black",
+        alpha=0.85
+    )
+
+    ax1.text(
+        0.98, 0.05,
+        textstr,
+        transform=ax1.transAxes,
+        fontsize=11,
+        verticalalignment="bottom",
+        horizontalalignment="right",
+        bbox=props,
+    )
+
+    # Achsen-/Layout-Einstellungen wie bisher
     ax1.grid(True)
     ax1.legend()
     ax1.set_xlabel("Min vor ATOT")
     ax1.set_ylabel("Delta (min)")
     fig1.tight_layout()
+
     st.pyplot(fig1)
     st.markdown("</div>", unsafe_allow_html=True)
 
