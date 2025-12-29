@@ -66,8 +66,7 @@ TIME_MIN = 0
 DELTA_LIMIT = 120
 MIN_COUNT = 200
 
-HIST_LIMIT = 30  
-
+HIST_LIMIT = 30
 
 AIRLINE_CATEGORIES = {
     "DLH Group": ["AUA", "SWR", "EWG", "DLH", "BEL", "CLH", "DLA", "OCN"],
@@ -162,7 +161,6 @@ def compute_stats(data, col, limit):
     )
 
 
-
 def percent_within_window(df, bins, col, window, limit):
     mask = df[col].between(-limit, limit)
     sub = df.loc[mask, ["bin", col]].copy()
@@ -187,6 +185,94 @@ def load_base64(path):
 
 
 # ================================================================
+# Plotly Helpers
+# ================================================================
+def hex_to_rgba(hex_color: str, alpha: float = 0.10) -> str:
+    """'#RRGGBB' -> 'rgba(r,g,b,a)'"""
+    hex_color = hex_color.strip().lstrip("#")
+    if len(hex_color) != 6:
+        return f"rgba(0,0,0,{alpha})"
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def _plotly_layout(compact, x_title, y_title, height_big=520, height_small=380):
+    return dict(
+        template="plotly_white",
+        height=height_small if compact else height_big,
+        margin=dict(l=20, r=20, t=20, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis_title=x_title,
+        yaxis_title=y_title,
+        hovermode="x unified",
+    )
+
+
+def add_mean_series(fig, stats, label, color, min_count, show_std):
+    valid = stats["count"] >= min_count
+    if valid.sum() == 0:
+        return
+
+    x = stats.index[valid].to_numpy()
+    m = smooth(stats.loc[valid, "mean"]).to_numpy()
+    sd = smooth(stats.loc[valid, "std"]).to_numpy()
+    n = stats.loc[valid, "count"].to_numpy()
+
+    customdata = np.column_stack([sd, n])
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=m,
+            mode="lines+markers",
+            name=label,
+            line=dict(color=color, width=2),
+            marker=dict(size=6),
+            customdata=customdata,
+            hovertemplate=(
+                "<b>%{fullData.name}</b><br>"
+                "Bin: %{x} min<br>"
+                "Mean: %{y:.2f} min<br>"
+                "Std: %{customdata[0]:.2f} min<br>"
+                "n: %{customdata[1]}<extra></extra>"
+            ),
+        )
+    )
+
+    if show_std:
+        upper = m + sd
+        lower = m - sd
+
+        # leichter Farbstich passend zur Linie
+        fill_rgba = hex_to_rgba(color, alpha=0.10)
+
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=upper,
+                mode="lines",
+                line=dict(width=0),
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=lower,
+                mode="lines",
+                line=dict(width=0),
+                fill="tonexty",
+                fillcolor=fill_rgba,
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+
+# ================================================================
 # MAIN APP
 # ================================================================
 def main():
@@ -194,7 +280,7 @@ def main():
         return
 
     # ------------------ Compact Toggle (ohne Sidebar) ------------------
-    top_left, top_right = st.columns([1, 2])
+    top_left, _ = st.columns([1, 2])
     with top_left:
         compact = st.checkbox("Kompaktmodus (mobile)", False, key="compact_mode")
 
@@ -329,8 +415,6 @@ def main():
     cat_counts0 = df_etot[df_etot["bin"] == 0].groupby("AirlineCategory")[COL_ETOT].size()
     rw_counts0 = df_etot[df_etot["bin"] == 0].groupby("Runway")[COL_ETOT].size()
 
-    fig_w, fig_h = (7, 3.5) if compact else (10, 5)
-
     # ================================================================
     # TABS (Variante A)
     # ================================================================
@@ -344,7 +428,7 @@ def main():
     ])
 
     # ================================================================
-    # TAB 1 – Mean-Verläufe (INTERAKTIV mit Hover via Plotly)
+    # TAB 1 – Mean-Verläufe (Plotly Hover)
     # ================================================================
     with tab1:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
@@ -360,132 +444,67 @@ def main():
         with c4:
             show_std = st.checkbox("±1σ anzeigen", True, key="p1_std")
 
-        # Plotly Figure
         fig = go.Figure()
 
-        def add_series(stats, name, color):
-            # valid bins
-            valid = stats["count"] >= MIN_COUNT
-            if valid.sum() == 0:
-                return
-
-            x = stats.index[valid].to_numpy()
-            m = smooth(stats.loc[valid, "mean"]).to_numpy()
-            sd = smooth(stats.loc[valid, "std"]).to_numpy()
-            n = stats.loc[valid, "count"].to_numpy()
-
-            # Hover-Template (zeigt bin, mean, std, n)
-            hover = (
-                "<b>%{customdata[0]}</b><br>"
-                "Bin: %{x} min<br>"
-                "Mean: %{y:.2f} min<br>"
-                "Std: %{customdata[1]:.2f} min<br>"
-                "n: %{customdata[2]}<extra></extra>"
-            )
-
-            customdata = np.column_stack([np.full_like(x, name, dtype=object), sd, n])
-
-            # Hauptlinie
-            fig.add_trace(
-                go.Scatter(
-                    x=x,
-                    y=m,
-                    mode="lines+markers",
-                    name=name,
-                    line=dict(color=color, width=2),
-                    marker=dict(size=6),
-                    customdata=customdata,
-                    hovertemplate=hover,
-                )
-            )
-
-            # ±1σ Band als “filled area” (optional)
-            if show_std:
-                upper = m + sd
-                lower = m - sd
-
-                # upper trace (invisible line)
-                fig.add_trace(
-                    go.Scatter(
-                        x=x,
-                        y=upper,
-                        mode="lines",
-                        line=dict(width=0),
-                        showlegend=False,
-                        hoverinfo="skip",
-                    )
-                )
-                # lower trace fill to previous
-                fig.add_trace(
-                    go.Scatter(
-                        x=x,
-                        y=lower,
-                        mode="lines",
-                        line=dict(width=0),
-                        fill="tonexty",
-                        fillcolor="rgba(0,0,0,0.08)",  # leicht transparent; wenn du’s farbig willst, sag kurz
-                        showlegend=False,
-                        hoverinfo="skip",
-                    )
-                )
-
-        # Serien hinzufügen
         if s_etot:
-            add_series(etot_stats, "ETOT (Abs)", colors["etot"])
+            add_mean_series(fig, etot_stats, "ETOT (Abs)", colors["etot"], MIN_COUNT, show_std)
         if s_ctot:
-            add_series(ctot_stats, "CTOT (Abs)", colors["ctot"])
+            add_mean_series(fig, ctot_stats, "CTOT (Abs)", colors["ctot"], MIN_COUNT, show_std)
         if s_atc:
-            add_series(atc_stats, "ATC-TTOT (Abs)", colors["atc"])
+            add_mean_series(fig, atc_stats, "ATC-TTOT (Abs)", colors["atc"], MIN_COUNT, show_std)
 
-        fig.update_layout(
-            template="plotly_white",
-            height=520 if not compact else 380,
-            margin=dict(l=20, r=20, t=30, b=10),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            xaxis_title="Min vor ATOT",
-            yaxis_title="Delta (min)",
-            hovermode="x unified",  # zeigt alle Linien an einem Bin gemeinsam
-        )
-
+        fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "Delta (min)"))
         st.plotly_chart(fig, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-
     # ================================================================
-    # TAB 2 – Stabilität
+    # TAB 2 – Stabilität (Plotly Hover)
     # ================================================================
     with tab2:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
-        st.subheader("Panel 2 – Stabilität (± Zeitfenster)")
+        st.subheader("Panel 2 – Stabilität (± Zeitfenster) (Hover)")
 
         window = st.slider("Fenster (± Minuten)", 1, 15, 3, key="p2_window")
-        bins = etot_stats.index
+        bins = etot_stats.index.to_numpy()
 
-        pct_etot = percent_within_window(df, bins, COL_ETOT, window, DELTA_LIMIT)
-        pct_ctot = percent_within_window(df, bins, COL_CTOT, window, DELTA_LIMIT)
-        pct_atc = percent_within_window(df, bins, COL_ATC, window, DELTA_LIMIT)
+        pct_etot = percent_within_window(df, etot_stats.index, COL_ETOT, window, DELTA_LIMIT)
+        pct_ctot = percent_within_window(df, etot_stats.index, COL_CTOT, window, DELTA_LIMIT)
+        pct_atc = percent_within_window(df, etot_stats.index, COL_ATC, window, DELTA_LIMIT)
 
-        fig2, ax2 = plt.subplots(figsize=(fig_w, fig_h))
-        ax2.plot(bins, pct_etot, marker="o", color=colors["etot"], label=f"ETOT ±{window} min (n={n0_etot})")
-        ax2.plot(bins, pct_ctot, marker="o", color=colors["ctot"], label=f"CTOT ±{window} min (n={n0_ctot})")
-        ax2.plot(bins, pct_atc, marker="o", color=colors["atc"], label=f"ATC-TTOT ±{window} min (n={n0_atc})")
+        fig = go.Figure()
 
-        ax2.set_ylim(0, 100)
-        ax2.grid(True)
-        ax2.legend()
-        ax2.set_xlabel("Min vor ATOT")
-        ax2.set_ylabel("Anteil (%)")
-        fig2.tight_layout()
+        def add_pct(name, y, color, n0):
+            fig.add_trace(
+                go.Scatter(
+                    x=bins,
+                    y=y,
+                    mode="lines+markers",
+                    name=f"{name} ±{window} min (n={n0})",
+                    line=dict(color=color, width=2),
+                    marker=dict(size=6),
+                    hovertemplate=(
+                        "<b>%{fullData.name}</b><br>"
+                        "Bin: %{x} min<br>"
+                        "Anteil: %{y:.1f}%<extra></extra>"
+                    ),
+                )
+            )
 
-        st.pyplot(fig2)
+        add_pct("ETOT", pct_etot, colors["etot"], n0_etot)
+        add_pct("CTOT", pct_ctot, colors["ctot"], n0_ctot)
+        add_pct("ATC-TTOT", pct_atc, colors["atc"], n0_atc)
+
+        fig.update_yaxes(range=[0, 100])
+        fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "Anteil (%)"))
+        st.plotly_chart(fig, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # TAB 3 – Airline Kategorien
+    # TAB 3 – Airline Kategorien (Plotly Hover)
     # ================================================================
     with tab3:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
-        st.subheader("Panel 3 – Airline-Kategorien (ETOT)")
+        st.subheader("Panel 3 – Airline-Kategorien (ETOT) (Hover)")
 
         cols = st.columns(len(CATEGORIES_OF_INTEREST))
         show_cat = {}
@@ -493,33 +512,48 @@ def main():
             with cols[i]:
                 show_cat[cat] = st.checkbox(cat, False, key=f"p3_cat_{cat}")
 
-        fig3, ax3 = plt.subplots(figsize=(fig_w, fig_h))
+        # Gruppierung
         cat_grp = df_etot.groupby(["bin", "AirlineCategory"])[COL_ETOT].mean()
+
+        fig = go.Figure()
 
         for cat in CATEGORIES_OF_INTEREST:
             if not show_cat.get(cat, False):
                 continue
             if cat not in cat_grp.index.get_level_values(1):
                 continue
+
             series = cat_grp.xs(cat, level="AirlineCategory").sort_index()
+            x = series.index.to_numpy()
+            y = smooth(series).to_numpy()
             n0_cat = int(cat_counts0.get(cat, 0))
-            ax3.plot(series.index, smooth(series), marker="o", linewidth=2, label=f"{cat} (n={n0_cat})")
 
-        ax3.grid(True)
-        ax3.legend()
-        ax3.set_xlabel("Min vor ATOT")
-        ax3.set_ylabel("Delta ETOT (min)")
-        fig3.tight_layout()
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=y,
+                    mode="lines+markers",
+                    name=f"{cat} (n={n0_cat})",
+                    line=dict(width=2),
+                    marker=dict(size=6),
+                    hovertemplate=(
+                        "<b>%{fullData.name}</b><br>"
+                        "Bin: %{x} min<br>"
+                        "Mean ΔETOT: %{y:.2f} min<extra></extra>"
+                    ),
+                )
+            )
 
-        st.pyplot(fig3)
+        fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "Delta ETOT (min)"))
+        st.plotly_chart(fig, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # TAB 4 – Runways
+    # TAB 4 – Runways (Plotly Hover)
     # ================================================================
     with tab4:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
-        st.subheader("Panel 4 – Runways (ETOT)")
+        st.subheader("Panel 4 – Runways (ETOT) (Hover)")
 
         cols = st.columns(len(RUNWAYS_OF_INTEREST))
         show_rw = {}
@@ -527,33 +561,47 @@ def main():
             with cols[i]:
                 show_rw[rw] = st.checkbox(f"RWY {rw}", False, key=f"p4_rw_{rw}")
 
-        fig4, ax4 = plt.subplots(figsize=(fig_w, fig_h))
         rw_grp = df_etot.groupby(["bin", "Runway"])[COL_ETOT].mean()
+
+        fig = go.Figure()
 
         for rw in RUNWAYS_OF_INTEREST:
             if not show_rw.get(rw, False):
                 continue
             if rw not in rw_grp.index.get_level_values(1):
                 continue
-            series = rw_grp.xs(rw, level="Runway")
+
+            series = rw_grp.xs(rw, level="Runway").sort_index()
+            x = series.index.to_numpy()
+            y = smooth(series).to_numpy()
             n0_rw = int(rw_counts0.get(rw, 0))
-            ax4.plot(series.index, smooth(series), marker="o", linewidth=2, label=f"RWY {rw} (n={n0_rw})")
 
-        ax4.grid(True)
-        ax4.legend()
-        ax4.set_xlabel("Min vor ATOT")
-        ax4.set_ylabel("Delta ETOT (min)")
-        fig4.tight_layout()
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=y,
+                    mode="lines+markers",
+                    name=f"RWY {rw} (n={n0_rw})",
+                    line=dict(width=2),
+                    marker=dict(size=6),
+                    hovertemplate=(
+                        "<b>%{fullData.name}</b><br>"
+                        "Bin: %{x} min<br>"
+                        "Mean ΔETOT: %{y:.2f} min<extra></extra>"
+                    ),
+                )
+            )
 
-        st.pyplot(fig4)
+        fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "Delta ETOT (min)"))
+        st.plotly_chart(fig, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # TAB 5 – Histogramm Signed
+    # TAB 5 – Histogramm Signed (Plotly Hover)
     # ================================================================
     with tab5:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
-        st.subheader("Panel 5 – Histogramm (DeltaSigned)")
+        st.subheader("Panel 5 – Histogramm (DeltaSigned) (Hover)")
 
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -563,74 +611,69 @@ def main():
         with c3:
             h_atc = st.checkbox("ATC-TTOT (Signed) anzeigen", False, key="p5_atc")
 
-        # NEW: Mean-Bias Linien Toggle
         show_mean_bias = st.checkbox("Mean Bias anzeigen (vertikale Linie)", True, key="p5_meanbias")
-
         hist_bin_width = st.slider("Histogramm-Breite (min)", 1, 10, 2, step=1, key="p5_bw")
 
-        bins_hist = np.arange(-HIST_LIMIT, HIST_LIMIT + hist_bin_width, hist_bin_width)
+        # Bin edges
+        bins_edges = np.arange(-HIST_LIMIT, HIST_LIMIT + hist_bin_width, hist_bin_width)
 
-        fig5, ax5 = plt.subplots(figsize=(fig_w, fig_h))
+        fig = go.Figure()
 
-        
-        def plot_hist_with_mean(col, label, color, mean_linestyle="--"):
+        def add_hist(col, name, color):
             s = df[col].dropna()
             s = s[(s >= -HIST_LIMIT) & (s <= HIST_LIMIT)]
-
             if s.empty:
                 return
 
-            # --- Perzentil-Cut gegen Ausreißer (innerhalb des HIST_LIMIT Fensters) ---
+            # Outlier cut (innerhalb Fenster)
             low, high = np.percentile(s, [1, 99])
             s = s[(s >= low) & (s <= high)]
-
             if s.empty:
                 return
 
             mu = float(s.mean())
 
-            ax5.hist(
-                s,
-                bins=bins_hist,
-                alpha=0.45,
-                density=True,
-                label=f"{label} (n={len(s)}, μ={mu:.2f})" if show_mean_bias else f"{label} (n={len(s)})",
-                color=color,
-                edgecolor="none",
+            fig.add_trace(
+                go.Histogram(
+                    x=s,
+                    xbins=dict(start=-HIST_LIMIT, end=HIST_LIMIT, size=hist_bin_width),
+                    histnorm="probability density",
+                    name=f"{name} (n={len(s)}, μ={mu:.2f})" if show_mean_bias else f"{name} (n={len(s)})",
+                    opacity=0.45,
+                    marker=dict(color=color),
+                    hovertemplate=(
+                        "<b>%{fullData.name}</b><br>"
+                        "Bin: %{x} min<br>"
+                        "Dichte: %{y:.4f}<extra></extra>"
+                    ),
+                )
             )
 
             if show_mean_bias:
-                ax5.axvline(mu, linestyle=mean_linestyle, linewidth=2, color=color)
-
+                fig.add_vline(x=mu, line_width=2, line_dash="dash", line_color=color)
 
         if h_etot:
-            plot_hist_with_mean(COL_ETOT_S, "ETOT", colors["etot"])
+            add_hist(COL_ETOT_S, "ETOT", colors["etot"])
         if h_ctot:
-            plot_hist_with_mean(COL_CTOT_S, "CTOT", colors["ctot"])
+            add_hist(COL_CTOT_S, "CTOT", colors["ctot"])
         if h_atc:
-            plot_hist_with_mean(COL_ATC_S, "ATC-TTOT", colors["atc"])
+            add_hist(COL_ATC_S, "ATC-TTOT", colors["atc"])
 
+        # Captions
         cap_left, cap_mid, cap_right = st.columns([1, 2, 1])
-
         with cap_left:
             st.caption("⬅️ **zu früh gestartet** (positiver Delta)")
-
         with cap_mid:
             st.caption("⏱️ Referenz: 0 = pünktlich")
-
         with cap_right:
             st.caption("➡️ **zu spät gestartet** (negativer Delta)")
 
+        fig.update_layout(**_plotly_layout(compact, "DeltaSigned (min)  ⟵ zu früh | zu spät ⟶", "Dichte", height_big=520, height_small=420))
+        # "drehen": positive links, negative rechts
+        fig.update_xaxes(autorange="reversed", range=[HIST_LIMIT, -HIST_LIMIT])
+        fig.add_vline(x=0, line_width=1, line_color="black")
 
-        ax5.invert_xaxis()
-        ax5.axvline(0, linewidth=1)
-        ax5.grid(True)
-        ax5.set_xlabel("DeltaSigned (min)  ⟵ zu früh | zu spät ⟶")
-        ax5.set_ylabel("Dichte")
-        ax5.legend()
-        fig5.tight_layout()
-
-        st.pyplot(fig5)
+        st.plotly_chart(fig, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
@@ -643,10 +686,13 @@ def main():
         summary = pd.DataFrame({
             "bin": etot_stats.index,
             "ETOT_mean": etot_stats["mean"],
+            "ETOT_std": etot_stats["std"],
             "ETOT_count": etot_stats["count"],
             "CTOT_mean": ctot_stats["mean"].reindex(etot_stats.index),
+            "CTOT_std": ctot_stats["std"].reindex(etot_stats.index),
             "CTOT_count": ctot_stats["count"].reindex(etot_stats.index),
             "ATC_mean": atc_stats["mean"].reindex(etot_stats.index),
+            "ATC_std": atc_stats["std"].reindex(etot_stats.index),
             "ATC_count": atc_stats["count"].reindex(etot_stats.index),
             "CTOT_ETOT_ratio_%": ratio_ctot,
             "ATC_ETOT_ratio_%": ratio_atc,
