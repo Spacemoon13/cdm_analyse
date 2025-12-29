@@ -89,7 +89,7 @@ def smooth(series, window=3):
 
 
 # ================================================================
-# NEUE SPALTENNAMEN (ABS fürs Erste)
+# SPALTENNAMEN
 # ================================================================
 COL_MIN_TO_ATOT = "Min bis ATOT"
 
@@ -97,7 +97,7 @@ COL_ETOT = "DeltaAbs - ETOT (min)"
 COL_CTOT = "DeltaAbs - CTOT (min)"
 COL_ATC = "DeltaAbs - ATC TTOT (min)"
 
-# === SIGNED (für Histogramm) ===
+# SIGNED (für Histogramm)
 COL_ETOT_S = "DeltaSigned - ETOT (min)"
 COL_CTOT_S = "DeltaSigned - CTOT (min)"
 COL_ATC_S = "DeltaSigned - ATC TTOT (min)"
@@ -110,9 +110,6 @@ NUMERIC_COLS = [COL_MIN_TO_ATOT, COL_ETOT, COL_CTOT, COL_ATC]
 # ================================================================
 @st.cache_data
 def load_data():
-    """Lädt die Excel-Datei von der in st.secrets konfigurierten URL.
-    Bei Fehlern wird eine RuntimeError ausgelöst.
-    """
     url = st.secrets["file_links"]["xlsm_url"]
 
     try:
@@ -128,27 +125,20 @@ def load_data():
         engine="openpyxl",
     )
 
-    # Optional: Prüfen ob benötigte Spalten vorhanden sind
     required_cols = NUMERIC_COLS + ["Runway", "Airline", COL_ETOT_S, COL_CTOT_S, COL_ATC_S]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise RuntimeError(f"Fehlende Spalten in Excel: {missing}")
 
-    # Numeric parsing (ABS + SIGNED)
     for col in (NUMERIC_COLS + [COL_ETOT_S, COL_CTOT_S, COL_ATC_S]):
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Drop rows ohne Min bis ATOT
     df = df.dropna(subset=[COL_MIN_TO_ATOT])
 
-    # Binning
     df["bin"] = (df[COL_MIN_TO_ATOT] / BIN_SIZE).astype(int) * BIN_SIZE
-
-    # Cleanup
     df["Runway"] = df["Runway"].astype(str).str.strip()
     df["Airline"] = df["Airline"].astype(str).str.strip()
 
-    # Airline Categories
     airline_map = {}
     for cat, codes in AIRLINE_CATEGORIES.items():
         for c in codes:
@@ -165,9 +155,6 @@ def compute_stats(data, col, limit):
 
 
 def percent_within_window(df, bins, col, window, limit):
-    """Vectorisierte Berechnung: für jeden bin den Anteil (%) von Werten in ±window
-    (nur Werte innerhalb ±limit werden berücksichtigt).
-    """
     mask = df[col].between(-limit, limit)
     sub = df.loc[mask, ["bin", col]].copy()
     if sub.empty:
@@ -176,17 +163,13 @@ def percent_within_window(df, bins, col, window, limit):
     sub["ok"] = sub[col].between(-window, window)
     grp = sub.groupby("bin")["ok"].agg(total="size", ok="sum")
     pct = (grp["ok"] / grp["total"]) * 100
-
-    # Reindex auf bins, fehlende Bins -> NaN
-    pct_full = pct.reindex(bins).to_numpy(dtype=float)
-    return pct_full
+    return pct.reindex(bins).to_numpy(dtype=float)
 
 
 # ================================================================
 # Bild laden (ACG Logo)
 # ================================================================
 def load_base64(path):
-    """Lädt eine lokale Bilddatei als base64-String; gibt None bei Fehlern zurück."""
     try:
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode()
@@ -198,12 +181,13 @@ def load_base64(path):
 # MAIN APP
 # ================================================================
 def main():
-    # ------------------ Passwortschutz ------------------
     if not check_password():
         return
 
-    # ------------------ Compact-Modus (Sidebar) ------------------
-    compact = st.sidebar.checkbox("Kompaktmodus (mobile)", False)
+    # ------------------ Compact Toggle (ohne Sidebar) ------------------
+    top_left, top_right = st.columns([1, 2])
+    with top_left:
+        compact = st.checkbox("Kompaktmodus (mobile)", False, key="compact_mode")
 
     # ------------------ Globales Styling ----------------
     base_css = """
@@ -216,16 +200,14 @@ def main():
       }
       .acg-muted { color:#666; font-size:0.85rem; }
 
-      /* Header */
       .acg-header {
         display:flex; align-items:center; background:#003DA5;
-        padding:20px 30px; border-radius:12px; margin-bottom:35px; color:white;
+        padding:20px 30px; border-radius:12px; margin-bottom:25px; color:white;
       }
       .acg-header .title { font-size:40px; font-weight:700; color:white; }
       .acg-header img.logo-desktop { height:120px; margin-right:30px; display:block; }
       .acg-header img.logo-mobile { height:72px; margin-bottom:10px; display:none; }
 
-      /* Footer */
       .acg-footer {
         text-align:center; color:#666; font-size:0.85rem;
         padding:12px 0; margin-top:18px; border-top:1px solid #eee;
@@ -242,7 +224,6 @@ def main():
     """
     st.markdown(base_css, unsafe_allow_html=True)
 
-    # Compact overrides (if user toggles)
     if compact:
         st.markdown(
             """
@@ -291,7 +272,7 @@ def main():
         st.error(f"Daten konnten nicht geladen werden: {e}")
         return
 
-    # ------------------ TIME RANGE Slider (min/max in 5er-Bins) -----------------
+    # ------------------ Global Filter: Zeitbereich -----------------
     with st.container():
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
 
@@ -325,12 +306,8 @@ def main():
     ratio_ctot = (ctot_counts / etot_counts.replace(0, np.nan)) * 100
     ratio_atc = (atc_counts / etot_counts.replace(0, np.nan)) * 100
 
-    df_etot = df[
-        df[COL_ETOT].notna()
-        & df[COL_ETOT].between(-DELTA_LIMIT, DELTA_LIMIT)
-    ]
+    df_etot = df[df[COL_ETOT].notna() & df[COL_ETOT].between(-DELTA_LIMIT, DELTA_LIMIT)]
 
-    # ------------------ n= Counts für bin=0 (für alle Panels) ------------------
     def n0_from_stats(stats):
         if 0 in stats.index:
             return int(stats.loc[0, "count"])
@@ -340,48 +317,36 @@ def main():
     n0_ctot = n0_from_stats(ctot_stats)
     n0_atc = n0_from_stats(atc_stats)
 
-    # Panel 3: Airline-Kategorien (nur bin=0)
-    cat_counts0 = (
-        df_etot[df_etot["bin"] == 0]
-        .groupby("AirlineCategory")[COL_ETOT]
-        .size()
-    )
+    cat_counts0 = df_etot[df_etot["bin"] == 0].groupby("AirlineCategory")[COL_ETOT].size()
+    rw_counts0 = df_etot[df_etot["bin"] == 0].groupby("Runway")[COL_ETOT].size()
 
-    # Panel 4: Runways (nur bin=0)
-    rw_counts0 = (
-        df_etot[df_etot["bin"] == 0]
-        .groupby("Runway")[COL_ETOT]
-        .size()
-    )
-
-    # figure sizes based on compact mode
-    if compact:
-        fig_w, fig_h = 7, 3.5
-    else:
-        fig_w, fig_h = 10, 5
-
-    # ------------------ Panel-Auswahl ------------------
-    st.sidebar.markdown("## 📊 Panels anzeigen")
-    show_panel_1 = st.sidebar.checkbox("Panel 1 – Mean-Verläufe", False, key="show_p1")
-    show_panel_2 = st.sidebar.checkbox("Panel 2 – Stabilität", False, key="show_p2")
-    show_panel_3 = st.sidebar.checkbox("Panel 3 – Airline-Kategorien", False, key="show_p3")
-    show_panel_4 = st.sidebar.checkbox("Panel 4 – Runways", False, key="show_p4")
-    show_panel_5 = st.sidebar.checkbox("Panel 5 – Histogramm (Signed)", False, key="show_p5")
-    show_export = st.sidebar.checkbox("Export anzeigen", False, key="show_export")
+    fig_w, fig_h = (7, 3.5) if compact else (10, 5)
 
     # ================================================================
-    # PANEL 1 – Mean-Verläufe
+    # TABS (Variante A)
     # ================================================================
-    if show_panel_1:
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Panel 1 – Mean",
+        "Panel 2 – Stabilität",
+        "Panel 3 – Airlines",
+        "Panel 4 – Runways",
+        "Panel 5 – Histogramm",
+        "Export",
+    ])
+
+    # ================================================================
+    # TAB 1 – Mean-Verläufe
+    # ================================================================
+    with tab1:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
         st.subheader("Panel 1 – Mean-Verläufe ETOT / CTOT / ATC-TTOT")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
+        c1, c2, c3 = st.columns(3)
+        with c1:
             s_etot = st.checkbox("ETOT anzeigen", key="p1_etot")
-        with col2:
+        with c2:
             s_ctot = st.checkbox("CTOT anzeigen", key="p1_ctot")
-        with col3:
+        with c3:
             s_atc = st.checkbox("ATC-TTOT anzeigen", key="p1_atc")
 
         fig1, ax1 = plt.subplots(figsize=(fig_w, fig_h))
@@ -445,39 +410,20 @@ def main():
         if thr_mask.any():
             thr_bin = int(bins_arr[thr_mask][0])
 
-        lines = []
-        lines.append("Datenbasis (Anteil Flüge)")
-        lines.append("──────────────────────")
-
+        lines = ["Datenbasis (Anteil Flüge)", "──────────────────────"]
         if not np.isnan(ct_start):
-            lines.append(f"CTOT vorhanden bei {ct_start:.0f}%")
-            lines.append("der Flüge bei ATOT")
+            lines += [f"CTOT vorhanden bei {ct_start:.0f}%", "der Flüge bei ATOT"]
         if not np.isnan(ct_end):
-            lines.append(f"→ ca. {ct_end:.0f}% der Flüge")
-            lines.append(f"im Bereich {int(t_min)}–{int(t_max)} min vor ATOT")
-
+            lines += [f"→ ca. {ct_end:.0f}% der Flüge", f"im Bereich {int(t_min)}–{int(t_max)} min vor ATOT"]
         lines.append("")
-
         if not np.isnan(at_start):
-            lines.append(f"ATC-TTOT vorhanden bei {at_start:.0f}%")
-            lines.append("der Flüge bei ATOT")
+            lines += [f"ATC-TTOT vorhanden bei {at_start:.0f}%", "der Flüge bei ATOT"]
         if thr_bin is not None:
-            lines.append(f"→ ab ca. {thr_bin} min vor ATOT")
-            lines.append("keine verwertbaren ATC-TTOT mehr")
+            lines += [f"→ ab ca. {thr_bin} min vor ATOT", "keine verwertbaren ATC-TTOT mehr"]
 
-        textstr = "\n".join(lines)
-
-        props = dict(
-            boxstyle="round,pad=0.6",
-            facecolor="white",
-            edgecolor="black",
-            alpha=0.85,
-        )
-
+        props = dict(boxstyle="round,pad=0.6", facecolor="white", edgecolor="black", alpha=0.85)
         ax1.text(
-            0.98,
-            0.05,
-            textstr,
+            0.98, 0.05, "\n".join(lines),
             transform=ax1.transAxes,
             fontsize=11,
             verticalalignment="bottom",
@@ -495,9 +441,9 @@ def main():
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # PANEL 2 – Stabilität ± Window
+    # TAB 2 – Stabilität
     # ================================================================
-    if show_panel_2:
+    with tab2:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
         st.subheader("Panel 2 – Stabilität (± Zeitfenster)")
 
@@ -509,27 +455,9 @@ def main():
         pct_atc = percent_within_window(df, bins, COL_ATC, window, DELTA_LIMIT)
 
         fig2, ax2 = plt.subplots(figsize=(fig_w, fig_h))
-        ax2.plot(
-            bins,
-            pct_etot,
-            marker="o",
-            color=colors["etot"],
-            label=f"ETOT ±{window} min (n={n0_etot})",
-        )
-        ax2.plot(
-            bins,
-            pct_ctot,
-            marker="o",
-            color=colors["ctot"],
-            label=f"CTOT ±{window} min (n={n0_ctot})",
-        )
-        ax2.plot(
-            bins,
-            pct_atc,
-            marker="o",
-            color=colors["atc"],
-            label=f"ATC-TTOT ±{window} min (n={n0_atc})",
-        )
+        ax2.plot(bins, pct_etot, marker="o", color=colors["etot"], label=f"ETOT ±{window} min (n={n0_etot})")
+        ax2.plot(bins, pct_ctot, marker="o", color=colors["ctot"], label=f"CTOT ±{window} min (n={n0_ctot})")
+        ax2.plot(bins, pct_atc, marker="o", color=colors["atc"], label=f"ATC-TTOT ±{window} min (n={n0_atc})")
 
         ax2.set_ylim(0, 100)
         ax2.grid(True)
@@ -542,9 +470,9 @@ def main():
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # PANEL 3 – Airline Kategorien
+    # TAB 3 – Airline Kategorien
     # ================================================================
-    if show_panel_3:
+    with tab3:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
         st.subheader("Panel 3 – Airline-Kategorien (ETOT)")
 
@@ -555,7 +483,6 @@ def main():
                 show_cat[cat] = st.checkbox(cat, False, key=f"p3_cat_{cat}")
 
         fig3, ax3 = plt.subplots(figsize=(fig_w, fig_h))
-
         cat_grp = df_etot.groupby(["bin", "AirlineCategory"])[COL_ETOT].mean()
 
         for cat in CATEGORIES_OF_INTEREST:
@@ -563,17 +490,9 @@ def main():
                 continue
             if cat not in cat_grp.index.get_level_values(1):
                 continue
-
             series = cat_grp.xs(cat, level="AirlineCategory").sort_index()
             n0_cat = int(cat_counts0.get(cat, 0))
-
-            ax3.plot(
-                series.index,
-                smooth(series),
-                marker="o",
-                linewidth=2,
-                label=f"{cat} (n={n0_cat})",
-            )
+            ax3.plot(series.index, smooth(series), marker="o", linewidth=2, label=f"{cat} (n={n0_cat})")
 
         ax3.grid(True)
         ax3.legend()
@@ -585,9 +504,9 @@ def main():
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # PANEL 4 – Runways
+    # TAB 4 – Runways
     # ================================================================
-    if show_panel_4:
+    with tab4:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
         st.subheader("Panel 4 – Runways (ETOT)")
 
@@ -598,7 +517,6 @@ def main():
                 show_rw[rw] = st.checkbox(f"RWY {rw}", False, key=f"p4_rw_{rw}")
 
         fig4, ax4 = plt.subplots(figsize=(fig_w, fig_h))
-
         rw_grp = df_etot.groupby(["bin", "Runway"])[COL_ETOT].mean()
 
         for rw in RUNWAYS_OF_INTEREST:
@@ -606,17 +524,9 @@ def main():
                 continue
             if rw not in rw_grp.index.get_level_values(1):
                 continue
-
             series = rw_grp.xs(rw, level="Runway")
             n0_rw = int(rw_counts0.get(rw, 0))
-
-            ax4.plot(
-                series.index,
-                smooth(series),
-                marker="o",
-                linewidth=2,
-                label=f"RWY {rw} (n={n0_rw})",
-            )
+            ax4.plot(series.index, smooth(series), marker="o", linewidth=2, label=f"RWY {rw} (n={n0_rw})")
 
         ax4.grid(True)
         ax4.legend()
@@ -628,9 +538,9 @@ def main():
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # PANEL 5 – Histogramm DeltaSigned
+    # TAB 5 – Histogramm Signed
     # ================================================================
-    if show_panel_5:
+    with tab5:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
         st.subheader("Panel 5 – Histogramm (DeltaSigned)")
 
@@ -682,9 +592,9 @@ def main():
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # Export – Summary
+    # TAB 6 – Export
     # ================================================================
-    if show_export:
+    with tab6:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
         st.subheader("Excel Export – Summary")
 
@@ -727,8 +637,5 @@ def main():
     )
 
 
-# ================================================================
-# Start App
-# ================================================================
 if __name__ == "__main__":
     main()
