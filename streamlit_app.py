@@ -65,6 +65,9 @@ TIME_MIN = 0
 DELTA_LIMIT = 120
 MIN_COUNT = 200
 
+HIST_LIMIT = 30  
+
+
 AIRLINE_CATEGORIES = {
     "DLH Group": ["AUA", "SWR", "EWG", "DLH", "BEL", "CLH", "DLA", "OCN"],
     "Low Cost Carrier": ["RYR", "WZZ", "WMT", "EZY", "EZS", "EJU", "VLG", "EXS", "TRA", "TVF", "CAI", "CXI", "SXS", "PGT", "TKJ"],
@@ -556,21 +559,24 @@ def main():
         show_mean_bias = st.checkbox("Mean Bias anzeigen (vertikale Linie)", True, key="p5_meanbias")
 
         hist_bin_width = st.slider("Histogramm-Breite (min)", 1, 10, 2, step=1, key="p5_bw")
-        hist_limit = st.slider("Anzeige-Limit (± min)", 30, 180, 120, step=10, key="p5_lim")
 
-        bins_hist = np.arange(-hist_limit, hist_limit + hist_bin_width, hist_bin_width)
+        bins_hist = np.arange(-HIST_LIMIT, HIST_LIMIT + hist_bin_width, hist_bin_width)
 
         fig5, ax5 = plt.subplots(figsize=(fig_w, fig_h))
 
+        
         def plot_hist_with_mean(col, label, color, mean_linestyle="--"):
             s = df[col].dropna()
-            s = s[(s >= -hist_limit) & (s <= hist_limit)]
+            s = s[(s >= -HIST_LIMIT) & (s <= HIST_LIMIT)]
 
-            # --- Perzentil-Cut gegen Ausreißer ---
+            if s.empty:
+                return
+
+            # --- Perzentil-Cut gegen Ausreißer (innerhalb des HIST_LIMIT Fensters) ---
             low, high = np.percentile(s, [1, 99])
             s = s[(s >= low) & (s <= high)]
 
-            if len(s) == 0:
+            if s.empty:
                 return
 
             mu = float(s.mean())
@@ -588,6 +594,7 @@ def main():
             if show_mean_bias:
                 ax5.axvline(mu, linestyle=mean_linestyle, linewidth=2, color=color)
 
+
         if h_etot:
             plot_hist_with_mean(COL_ETOT_S, "ETOT", colors["etot"])
         if h_ctot:
@@ -595,9 +602,22 @@ def main():
         if h_atc:
             plot_hist_with_mean(COL_ATC_S, "ATC-TTOT", colors["atc"])
 
+        cap_left, cap_mid, cap_right = st.columns([1, 2, 1])
+
+        with cap_left:
+            st.caption("⬅️ **zu früh gestartet** (positiver Delta)")
+
+        with cap_mid:
+            st.caption("⏱️ Referenz: 0 = pünktlich")
+
+        with cap_right:
+            st.caption("➡️ **zu spät gestartet** (negativer Delta)")
+
+
+        ax5.invert_xaxis()
         ax5.axvline(0, linewidth=1)
         ax5.grid(True)
-        ax5.set_xlabel("DeltaSigned (min)")
+        ax5.set_xlabel("DeltaSigned (min)  ⟵ zu früh | zu spät ⟶")
         ax5.set_ylabel("Dichte")
         ax5.legend()
         fig5.tight_layout()
