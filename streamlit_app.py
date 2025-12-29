@@ -154,7 +154,12 @@ def load_data():
 def compute_stats(data, col, limit):
     mask = data[col].notna() & data[col].between(-limit, limit)
     sub = data[mask]
-    return sub.groupby("bin")[col].agg(mean="mean", count="count").sort_index()
+    return (
+        sub.groupby("bin")[col]
+        .agg(mean="mean", std="std", count="count")
+        .sort_index()
+    )
+
 
 
 def percent_within_window(df, bins, col, window, limit):
@@ -338,56 +343,64 @@ def main():
     ])
 
     # ================================================================
-    # TAB 1 – Mean-Verläufe
+    # TAB 1 – Mean-Verläufe (mit ±1σ Band per Checkbox)
     # ================================================================
     with tab1:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
         st.subheader("Panel 1 – Mean-Verläufe ETOT / CTOT / ATC-TTOT")
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
             s_etot = st.checkbox("ETOT anzeigen", key="p1_etot")
         with c2:
             s_ctot = st.checkbox("CTOT anzeigen", key="p1_ctot")
         with c3:
             s_atc = st.checkbox("ATC-TTOT anzeigen", key="p1_atc")
+        with c4:
+            show_std = st.checkbox("±1σ anzeigen", True, key="p1_std")
 
         fig1, ax1 = plt.subplots(figsize=(fig_w, fig_h))
 
+        # Helper: Linie + optionales Std-Band
+        def plot_mean_with_std(stats, label, color):
+            valid = stats["count"] >= MIN_COUNT
+            if valid.sum() == 0:
+                return
+
+            x = stats.index[valid]
+            m = smooth(stats.loc[valid, "mean"])
+            sd = smooth(stats.loc[valid, "std"])
+
+            ax1.plot(
+                x,
+                m,
+                marker="o",
+                linewidth=2,
+                color=color,
+                label=label,
+            )
+
+            if show_std:
+                # std kann NaNs enthalten (z.B. bei count=1), das ist ok
+                ax1.fill_between(
+                    x,
+                    (m - sd),
+                    (m + sd),
+                    alpha=0.12,     # "ganz leicht"
+                    color=color,
+                    linewidth=0,
+                )
+
         if s_etot:
-            valid = etot_stats["count"] >= MIN_COUNT
-            ax1.plot(
-                etot_stats.index[valid],
-                smooth(etot_stats.loc[valid, "mean"]),
-                marker="o",
-                linewidth=2,
-                color=colors["etot"],
-                label="ETOT (Abs)",
-            )
-
+            plot_mean_with_std(etot_stats, "ETOT (Abs)", colors["etot"])
         if s_ctot:
-            valid = ctot_stats["count"] >= MIN_COUNT
-            ax1.plot(
-                ctot_stats.index[valid],
-                smooth(ctot_stats.loc[valid, "mean"]),
-                marker="o",
-                linewidth=2,
-                color=colors["ctot"],
-                label="CTOT (Abs)",
-            )
-
+            plot_mean_with_std(ctot_stats, "CTOT (Abs)", colors["ctot"])
         if s_atc:
-            valid = atc_stats["count"] >= MIN_COUNT
-            ax1.plot(
-                atc_stats.index[valid],
-                smooth(atc_stats.loc[valid, "mean"]),
-                marker="o",
-                linewidth=2,
-                color=colors["atc"],
-                label="ATC-TTOT (Abs)",
-            )
+            plot_mean_with_std(atc_stats, "ATC-TTOT (Abs)", colors["atc"])
 
+        # ------------------------------------------------
         # Info-Box unten rechts
+        # ------------------------------------------------
         etot_counts_box = etot_stats["count"]
         ctot_counts_box = ctot_stats["count"].reindex(etot_stats.index).fillna(0)
         atc_counts_box = atc_stats["count"].reindex(etot_stats.index).fillna(0)
@@ -426,7 +439,9 @@ def main():
 
         props = dict(boxstyle="round,pad=0.6", facecolor="white", edgecolor="black", alpha=0.85)
         ax1.text(
-            0.98, 0.05, "\n".join(lines),
+            0.98,
+            0.05,
+            "\n".join(lines),
             transform=ax1.transAxes,
             fontsize=11,
             verticalalignment="bottom",
@@ -442,6 +457,7 @@ def main():
 
         st.pyplot(fig1)
         st.markdown("</div>", unsafe_allow_html=True)
+
 
     # ================================================================
     # TAB 2 – Stabilität
