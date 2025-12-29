@@ -94,6 +94,10 @@ COL_MIN_TO_ATOT = "Min bis ATOT"
 COL_ETOT = "DeltaAbs - ETOT (min)"
 COL_CTOT = "DeltaAbs - CTOT (min)"
 COL_ATC  = "DeltaAbs - ATC TTOT (min)"
+# === SIGNED (für Histogramm) ===
+COL_ETOT_S = "DeltaSigned - ETOT (min)"
+COL_CTOT_S = "DeltaSigned - CTOT (min)"
+COL_ATC_S  = "DeltaSigned - ATC TTOT (min)"
 
 NUMERIC_COLS = [COL_MIN_TO_ATOT, COL_ETOT, COL_CTOT, COL_ATC]
 
@@ -121,15 +125,16 @@ def load_data():
     )
 
     # Optional: Prüfen ob benötigte Spalten vorhanden sind
-    required_cols = NUMERIC_COLS + ["Runway", "Airline"]
+    required_cols = NUMERIC_COLS + ["Runway", "Airline", COL_ETOT_S, COL_CTOT_S, COL_ATC_S]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise RuntimeError(f"Fehlende Spalten in Excel: {missing}")
 
-    # Numeric parsing
-    for col in NUMERIC_COLS:
+    # Numeric parsing (ABS + SIGNED)
+    for col in (NUMERIC_COLS + [COL_ETOT_S, COL_CTOT_S, COL_ATC_S]):
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    # Drop rows ohne Min bis ATOT
     df = df.dropna(subset=[COL_MIN_TO_ATOT])
 
     # Binning
@@ -148,6 +153,7 @@ def load_data():
     df["AirlineCategory"] = df["Airline"].map(airline_map).fillna("Other")
 
     return df
+
 
 
 def compute_stats(data, col, limit):
@@ -594,6 +600,61 @@ def main():
 
     st.pyplot(fig4)
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # ================================================================
+    # PANEL 5 – Histogramm DeltaSigned
+    # ================================================================
+    st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
+    st.subheader("Panel 5 – Histogramm (DeltaSigned)")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        h_etot = st.checkbox("ETOT (Signed) anzeigen", True)
+    with c2:
+        h_ctot = st.checkbox("CTOT (Signed) anzeigen", True)
+    with c3:
+        h_atc = st.checkbox("ATC-TTOT (Signed) anzeigen", False)
+
+    # Histogramm-Settings
+    hist_bin_width = st.slider("Histogramm-Breite (min)", 1, 10, 2, step=1)
+    hist_limit = st.slider("Anzeige-Limit (± min)", 30, 180, 120, step=10)
+
+    bins_hist = np.arange(-hist_limit, hist_limit + hist_bin_width, hist_bin_width)
+
+    fig5, ax5 = plt.subplots(figsize=(fig_w, fig_h))
+
+    def plot_hist(col, label, color):
+        s = df[col].dropna()
+        s = s[(s >= -hist_limit) & (s <= hist_limit)]
+        if len(s) == 0:
+            return
+        ax5.hist(
+            s,
+            bins=bins_hist,
+            alpha=0.45,
+            density=True,
+            label=f"{label} (n={len(s)})",
+            color=color,
+            edgecolor="none",
+        )
+
+    if h_etot:
+        plot_hist(COL_ETOT_S, "ETOT", colors["etot"])
+    if h_ctot:
+        plot_hist(COL_CTOT_S, "CTOT", colors["ctot"])
+    if h_atc:
+        plot_hist(COL_ATC_S, "ATC-TTOT", colors["atc"])
+
+    ax5.axvline(0, linewidth=1)
+    ax5.grid(True)
+    ax5.set_xlabel("DeltaSigned (min)")
+    ax5.set_ylabel("Dichte")
+    ax5.legend()
+    fig5.tight_layout()
+
+    st.pyplot(fig5)
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
     # ================================================================
     # Export – Summary
