@@ -7,6 +7,7 @@ import io
 import requests
 import base64
 import datetime
+import plotly.graph_objects as go
 
 # ================================================================
 # Streamlit Grund-Setup
@@ -343,11 +344,11 @@ def main():
     ])
 
     # ================================================================
-    # TAB 1 – Mean-Verläufe (mit ±1σ Band per Checkbox)
+    # TAB 1 – Mean-Verläufe (INTERAKTIV mit Hover via Plotly)
     # ================================================================
     with tab1:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
-        st.subheader("Panel 1 – Mean-Verläufe ETOT / CTOT / ATC-TTOT")
+        st.subheader("Panel 1 – Mean-Verläufe ETOT / CTOT / ATC-TTOT (Hover)")
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -359,103 +360,94 @@ def main():
         with c4:
             show_std = st.checkbox("±1σ anzeigen", True, key="p1_std")
 
-        fig1, ax1 = plt.subplots(figsize=(fig_w, fig_h))
+        # Plotly Figure
+        fig = go.Figure()
 
-        # Helper: Linie + optionales Std-Band
-        def plot_mean_with_std(stats, label, color):
+        def add_series(stats, name, color):
+            # valid bins
             valid = stats["count"] >= MIN_COUNT
             if valid.sum() == 0:
                 return
 
-            x = stats.index[valid]
-            m = smooth(stats.loc[valid, "mean"])
-            sd = smooth(stats.loc[valid, "std"])
+            x = stats.index[valid].to_numpy()
+            m = smooth(stats.loc[valid, "mean"]).to_numpy()
+            sd = smooth(stats.loc[valid, "std"]).to_numpy()
+            n = stats.loc[valid, "count"].to_numpy()
 
-            ax1.plot(
-                x,
-                m,
-                marker="o",
-                linewidth=2,
-                color=color,
-                label=label,
+            # Hover-Template (zeigt bin, mean, std, n)
+            hover = (
+                "<b>%{customdata[0]}</b><br>"
+                "Bin: %{x} min<br>"
+                "Mean: %{y:.2f} min<br>"
+                "Std: %{customdata[1]:.2f} min<br>"
+                "n: %{customdata[2]}<extra></extra>"
             )
 
+            customdata = np.column_stack([np.full_like(x, name, dtype=object), sd, n])
+
+            # Hauptlinie
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=m,
+                    mode="lines+markers",
+                    name=name,
+                    line=dict(color=color, width=2),
+                    marker=dict(size=6),
+                    customdata=customdata,
+                    hovertemplate=hover,
+                )
+            )
+
+            # ±1σ Band als “filled area” (optional)
             if show_std:
-                # std kann NaNs enthalten (z.B. bei count=1), das ist ok
-                ax1.fill_between(
-                    x,
-                    (m - sd),
-                    (m + sd),
-                    alpha=0.12,     # "ganz leicht"
-                    color=color,
-                    linewidth=0,
+                upper = m + sd
+                lower = m - sd
+
+                # upper trace (invisible line)
+                fig.add_trace(
+                    go.Scatter(
+                        x=x,
+                        y=upper,
+                        mode="lines",
+                        line=dict(width=0),
+                        showlegend=False,
+                        hoverinfo="skip",
+                    )
+                )
+                # lower trace fill to previous
+                fig.add_trace(
+                    go.Scatter(
+                        x=x,
+                        y=lower,
+                        mode="lines",
+                        line=dict(width=0),
+                        fill="tonexty",
+                        fillcolor="rgba(0,0,0,0.08)",  # leicht transparent; wenn du’s farbig willst, sag kurz
+                        showlegend=False,
+                        hoverinfo="skip",
+                    )
                 )
 
+        # Serien hinzufügen
         if s_etot:
-            plot_mean_with_std(etot_stats, "ETOT (Abs)", colors["etot"])
+            add_series(etot_stats, "ETOT (Abs)", colors["etot"])
         if s_ctot:
-            plot_mean_with_std(ctot_stats, "CTOT (Abs)", colors["ctot"])
+            add_series(ctot_stats, "CTOT (Abs)", colors["ctot"])
         if s_atc:
-            plot_mean_with_std(atc_stats, "ATC-TTOT (Abs)", colors["atc"])
+            add_series(atc_stats, "ATC-TTOT (Abs)", colors["atc"])
 
-        # ------------------------------------------------
-        # Info-Box unten rechts
-        # ------------------------------------------------
-        etot_counts_box = etot_stats["count"]
-        ctot_counts_box = ctot_stats["count"].reindex(etot_stats.index).fillna(0)
-        atc_counts_box = atc_stats["count"].reindex(etot_stats.index).fillna(0)
-
-        ratio_ctot_box = np.where(
-            etot_counts_box > 0, (ctot_counts_box / etot_counts_box) * 100, np.nan
-        )
-        ratio_atc_box = np.where(
-            etot_counts_box > 0, (atc_counts_box / etot_counts_box) * 100, np.nan
+        fig.update_layout(
+            template="plotly_white",
+            height=520 if not compact else 380,
+            margin=dict(l=20, r=20, t=30, b=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            xaxis_title="Min vor ATOT",
+            yaxis_title="Delta (min)",
+            hovermode="x unified",  # zeigt alle Linien an einem Bin gemeinsam
         )
 
-        bins_arr = etot_stats.index.to_numpy()
-
-        valid_ct = ~np.isnan(ratio_ctot_box)
-        ct_start = float(ratio_ctot_box[valid_ct][0]) if valid_ct.any() else np.nan
-        ct_end = float(ratio_ctot_box[valid_ct][-1]) if valid_ct.any() else np.nan
-
-        valid_at = ~np.isnan(ratio_atc_box)
-        at_start = float(ratio_atc_box[valid_at][0]) if valid_at.any() else np.nan
-
-        thr_bin = None
-        thr_mask = valid_at & (ratio_atc_box < 10)
-        if thr_mask.any():
-            thr_bin = int(bins_arr[thr_mask][0])
-
-        lines = ["Datenbasis (Anteil Flüge)", "──────────────────────"]
-        if not np.isnan(ct_start):
-            lines += [f"CTOT vorhanden bei {ct_start:.0f}%", "der Flüge bei ATOT"]
-        if not np.isnan(ct_end):
-            lines += [f"→ ca. {ct_end:.0f}% der Flüge", f"im Bereich {int(t_min)}–{int(t_max)} min vor ATOT"]
-        lines.append("")
-        if not np.isnan(at_start):
-            lines += [f"ATC-TTOT vorhanden bei {at_start:.0f}%", "der Flüge bei ATOT"]
-        if thr_bin is not None:
-            lines += [f"→ ab ca. {thr_bin} min vor ATOT", "keine verwertbaren ATC-TTOT mehr"]
-
-        props = dict(boxstyle="round,pad=0.6", facecolor="white", edgecolor="black", alpha=0.85)
-        ax1.text(
-            0.98,
-            0.05,
-            "\n".join(lines),
-            transform=ax1.transAxes,
-            fontsize=11,
-            verticalalignment="bottom",
-            horizontalalignment="right",
-            bbox=props,
-        )
-
-        ax1.grid(True)
-        ax1.legend()
-        ax1.set_xlabel("Min vor ATOT")
-        ax1.set_ylabel("Delta (min)")
-        fig1.tight_layout()
-
-        st.pyplot(fig1)
+        st.plotly_chart(fig, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
 
