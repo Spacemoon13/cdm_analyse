@@ -617,7 +617,7 @@ def main():
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # TAB 5 – Histogramm Signed (Plotly Hover)
+    # TAB 5 – Histogramm Signed (Plotly Hover) – korrekt gespiegelt
     # ================================================================
     with tab5:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
@@ -631,30 +631,56 @@ def main():
         with c3:
             h_atc = st.checkbox("ATC-TTOT (Signed) anzeigen", False, key="p5_atc")
 
-        show_mean_bias = st.checkbox("Mean Bias anzeigen (vertikale Linie)", True, key="p5_meanbias")
-        hist_bin_width = st.slider("Histogramm-Breite (min)", 1, 10, 2, step=1, key="p5_bw")
+        c4, c5 = st.columns([1, 1])
+        with c4:
+            show_mean_bias = st.checkbox(
+                "Mean Bias anzeigen (vertikale Linie)",
+                True,
+                key="p5_meanbias",
+            )
+        with c5:
+            outlier_cut = st.checkbox(
+                "Ausreißer cut (1–99 Perzentil)",
+                True,
+                key="p5_outliercut",
+            )
+
+        hist_bin_width = st.slider(
+            "Histogramm-Breite (min)",
+            1, 10, 2,
+            step=1,
+            key="p5_bw",
+        )
 
         fig = go.Figure()
 
         def add_hist(col, name, color):
-            s = df[col].dropna()
-            s = s[(s >= -HIST_LIMIT) & (s <= HIST_LIMIT)]
-            if s.empty:
+            # 1) Grundfenster
+            s_raw = df[col].dropna()
+            s_raw = s_raw[(s_raw >= -HIST_LIMIT) & (s_raw <= HIST_LIMIT)]
+            if s_raw.empty:
                 return
 
-            low, high = np.percentile(s, [1, 99])
-            s = s[(s >= low) & (s <= high)]
-            if s.empty:
-                return
+            # 2) optionaler Perzentil-Cut gegen Ausreißer (innerhalb Fenster)
+            if outlier_cut and len(s_raw) >= 10:
+                low, high = np.percentile(s_raw, [1, 99])
+                s_raw = s_raw[(s_raw >= low) & (s_raw <= high)]
+                if s_raw.empty:
+                    return
+
+            # 3) WICHTIG: echtes Spiegeln der Daten
+            #    Damit: links = "zu früh" (positiver Delta) und rechts = "zu spät" (negativer Delta)
+            s = -s_raw
 
             mu = float(s.mean())
+            n = int(len(s))
 
             fig.add_trace(
                 go.Histogram(
                     x=s,
                     xbins=dict(start=-HIST_LIMIT, end=HIST_LIMIT, size=hist_bin_width),
                     histnorm="probability density",
-                    name=f"{name} (n={len(s)}, μ={mu:.2f})" if show_mean_bias else f"{name} (n={len(s)})",
+                    name=f"{name} (n={n}, μ={mu:.2f})" if show_mean_bias else f"{name} (n={n})",
                     opacity=0.45,
                     marker=dict(color=color),
                     hovertemplate=(
@@ -675,20 +701,36 @@ def main():
         if h_atc:
             add_hist(COL_ATC_S, "ATC-TTOT", colors["atc"])
 
-        cap_left, cap_mid, cap_right = st.columns([1, 2, 1])
-        with cap_left:
-            st.caption("⬅️ **zu früh gestartet** (positiver Delta)")
-        with cap_mid:
-            st.caption("⏱️ Referenz: 0 = pünktlich")
-        with cap_right:
-            st.caption("➡️ **zu spät gestartet** (negativer Delta)")
+        # Wenn nichts gewählt wurde: Hinweis statt “leerer Chart”
+        if len(fig.data) == 0:
+            st.info("Bitte mindestens eine Serie auswählen (ETOT / CTOT / ATC-TTOT).")
+            st.markdown("</div>", unsafe_allow_html=True)
+        else:
+            # Captions
+            cap_left, cap_mid, cap_right = st.columns([1, 2, 1])
+            with cap_left:
+                st.caption("⬅️ **zu früh gestartet** (positiver Delta)")
+            with cap_mid:
+                st.caption("⏱️ Referenz: 0 = pünktlich")
+            with cap_right:
+                st.caption("➡️ **zu spät gestartet** (negativer Delta)")
 
-        fig.update_layout(**_plotly_layout(compact, "DeltaSigned (min)  ⟵ zu früh | zu spät ⟶", "Dichte", height_big=520, height_small=420))
-        fig.update_xaxes(autorange="reversed", range=[HIST_LIMIT, -HIST_LIMIT])
-        fig.add_vline(x=0, line_width=1, line_color="black")
+            fig.update_layout(
+                **_plotly_layout(
+                    compact,
+                    "DeltaSigned (min)  ⟵ zu früh | zu spät ⟶",
+                    "Dichte",
+                    height_big=520,
+                    height_small=420,
+                )
+            )
 
-        st.plotly_chart(fig, use_container_width=True, key="tab5_plot")
-        st.markdown("</div>", unsafe_allow_html=True)
+            # Achse NICHT invertieren – weil wir die Daten schon gespiegelt haben
+            fig.update_xaxes(range=[-HIST_LIMIT, HIST_LIMIT])
+            fig.add_vline(x=0, line_width=1, line_color="black")
+
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
     # TAB 6 – Export
