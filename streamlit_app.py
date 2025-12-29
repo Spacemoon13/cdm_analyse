@@ -289,13 +289,27 @@ def main():
         st.error(f"Daten konnten nicht geladen werden: {e}")
         return
 
-    # ------------------ TIME_MAX Slider -----------------
-    with st.container():
-        st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
-        time_max = st.slider("Maximale Zeit vor ATOT (min)", 60, 240, 120, step=5)
-        st.markdown("</div>", unsafe_allow_html=True)
+# ------------------ TIME RANGE Slider (min/max in 5er-Bins) -----------------
+with st.container():
+    st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
 
-    df = df[(df[COL_MIN_TO_ATOT] >= TIME_MIN) & (df[COL_MIN_TO_ATOT] <= time_max)].copy()
+    t_min, t_max = st.slider(
+        "Zeitbereich vor ATOT (min) – min/max",
+        min_value=0,
+        max_value=240,
+        value=(0, 120),   # Default: 0–120 (kannst du ändern)
+        step=5,
+    )
+
+    if t_min == t_max:
+        st.caption(f"Auswahl: **genau Bin {t_min}**")
+    else:
+        st.caption(f"Auswahl: **{t_min} – {t_max}** Minuten vor ATOT")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+df = df[(df[COL_MIN_TO_ATOT] >= t_min) & (df[COL_MIN_TO_ATOT] <= t_max)].copy()
+
 
     # ------------------ Statistiken (ABS) ---------------------
     etot_stats = compute_stats(df, COL_ETOT, DELTA_LIMIT)
@@ -431,7 +445,8 @@ def main():
         lines.append("der Flüge bei ATOT")
     if not np.isnan(ct_end):
         lines.append(f"→ ca. {ct_end:.0f}% der Flüge")
-        lines.append(f"bei {int(time_max)} min vor ATOT")
+        lines.append(f"im Bereich {int(t_min)}–{int(t_max)} min vor ATOT")
+
 
     lines.append("")
 
