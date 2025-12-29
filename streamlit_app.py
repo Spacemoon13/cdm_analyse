@@ -567,7 +567,7 @@ def main():
             s = s[(s >= -hist_limit) & (s <= hist_limit)]
 
             # --- Perzentil-Cut gegen Ausreißer ---
-            low, high = np.percentile(s, [5, 95])
+            low, high = np.percentile(s, [1, 99])
             s = s[(s >= low) & (s <= high)]
 
             if len(s) == 0:
