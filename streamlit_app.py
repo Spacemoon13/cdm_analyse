@@ -565,6 +565,11 @@ def main():
         def plot_hist_with_mean(col, label, color, mean_linestyle="--"):
             s = df[col].dropna()
             s = s[(s >= -hist_limit) & (s <= hist_limit)]
+
+            # --- Perzentil-Cut gegen Ausreißer ---
+            low, high = np.percentile(s, [5, 95])
+            s = s[(s >= low) & (s <= high)]
+
             if len(s) == 0:
                 return
 
