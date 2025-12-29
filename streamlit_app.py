@@ -36,12 +36,8 @@ def check_password():
     st.markdown(
         """
         <div style="padding:2rem 1rem 0.5rem 1rem; text-align:center;">
-            <h1 style="color:#003DA5; margin-bottom:0.2rem;">
-                CDM Dashboard – Login
-            </h1>
-            <p style="color:#555; font-size:0.95rem;">
-                Bitte Passwort eingeben, um das Dashboard zu öffnen.
-            </p>
+          <h1 style="color:#003DA5; margin-bottom:0.2rem;"> CDM Dashboard – Login </h1>
+          <p style="color:#555; font-size:0.95rem;"> Bitte Passwort eingeben, um das Dashboard zu öffnen. </p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -64,17 +60,16 @@ def check_password():
 # Einstellungen / Defaults
 # ================================================================
 SHEET_NAME = "Deltas"
-
 BIN_SIZE = 5
 TIME_MIN = 0
 DELTA_LIMIT = 120
 MIN_COUNT = 200
 
 AIRLINE_CATEGORIES = {
-    "DLH Group": ["AUA","SWR","EWG","DLH","BEL","CLH","DLA","OCN"],
-    "Low Cost Carrier": ["RYR","WZZ","WMT","EZY","EZS","EJU","VLG","EXS","TRA","TVF","CAI","CXI","SXS","PGT","TKJ"],
-    "Long Haul": ["UAE","QTR","ETD","ACA","EVA","ETH","CHH","CAL","KAL","JAL","AIC","ABY","CCA"],
-    "Biz Jets": ["VJT","NJE","AWH","GDK","AOJ","LDX","VCJ","JFL","TJS","PTN","GCK","IFA","IJM","UAG","FSF","PAV","PVD","BTX","TOY","MPC","OEE","OEH","OEF","OEI"],
+    "DLH Group": ["AUA", "SWR", "EWG", "DLH", "BEL", "CLH", "DLA", "OCN"],
+    "Low Cost Carrier": ["RYR", "WZZ", "WMT", "EZY", "EZS", "EJU", "VLG", "EXS", "TRA", "TVF", "CAI", "CXI", "SXS", "PGT", "TKJ"],
+    "Long Haul": ["UAE", "QTR", "ETD", "ACA", "EVA", "ETH", "CHH", "CAL", "KAL", "JAL", "AIC", "ABY", "CCA"],
+    "Biz Jets": ["VJT", "NJE", "AWH", "GDK", "AOJ", "LDX", "VCJ", "JFL", "TJS", "PTN", "GCK", "IFA", "IJM", "UAG", "FSF", "PAV", "PVD", "BTX", "TOY", "MPC", "OEE", "OEH", "OEF", "OEI"],
 }
 
 CATEGORIES_OF_INTEREST = ["DLH Group", "Low Cost Carrier", "Long Haul", "Biz Jets"]
@@ -91,6 +86,16 @@ colors = {
 def smooth(series, window=3):
     return series.rolling(window=window, center=True, min_periods=1).mean()
 
+# ================================================================
+# NEUE SPALTENNAMEN (ABS fürs Erste)
+# ================================================================
+COL_MIN_TO_ATOT = "Min bis ATOT"
+
+COL_ETOT = "DeltaAbs - ETOT (min)"
+COL_CTOT = "DeltaAbs - CTOT (min)"
+COL_ATC  = "DeltaAbs - ATC TTOT (min)"
+
+NUMERIC_COLS = [COL_MIN_TO_ATOT, COL_ETOT, COL_CTOT, COL_ATC]
 
 # ================================================================
 # Daten laden (GitHub raw URL kommt aus secrets)
@@ -98,8 +103,10 @@ def smooth(series, window=3):
 @st.cache_data
 def load_data():
     """Lädt die Excel-Datei von der in st.secrets konfigurierten URL.
-    Bei Fehlern wird eine RuntimeError ausgelöst."""
+    Bei Fehlern wird eine RuntimeError ausgelöst.
+    """
     url = st.secrets["file_links"]["xlsm_url"]
+
     try:
         with requests.Session() as s:
             resp = s.get(url, timeout=30)
@@ -113,21 +120,26 @@ def load_data():
         engine="openpyxl",
     )
 
-    numeric_cols = [
-        "Min bis ATOT",
-        "Delta - ETOT (min)",
-        "Delta - CTOT (min)",
-        "Delta - ATC TTOT (min)"
-    ]
-    for col in numeric_cols:
+    # Optional: Prüfen ob benötigte Spalten vorhanden sind
+    required_cols = NUMERIC_COLS + ["Runway", "Airline"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise RuntimeError(f"Fehlende Spalten in Excel: {missing}")
+
+    # Numeric parsing
+    for col in NUMERIC_COLS:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    df = df.dropna(subset=["Min bis ATOT"])
+    df = df.dropna(subset=[COL_MIN_TO_ATOT])
 
-    df["bin"] = (df["Min bis ATOT"] / BIN_SIZE).astype(int) * BIN_SIZE
+    # Binning
+    df["bin"] = (df[COL_MIN_TO_ATOT] / BIN_SIZE).astype(int) * BIN_SIZE
+
+    # Cleanup
     df["Runway"] = df["Runway"].astype(str).str.strip()
     df["Airline"] = df["Airline"].astype(str).str.strip()
 
+    # Airline Categories
     airline_map = {}
     for cat, codes in AIRLINE_CATEGORIES.items():
         for c in codes:
@@ -146,14 +158,17 @@ def compute_stats(data, col, limit):
 
 def percent_within_window(df, bins, col, window, limit):
     """Vectorisierte Berechnung: für jeden bin den Anteil (%) von Werten in ±window
-    (nur Werte innerhalb ±limit werden berücksichtigt)."""
+    (nur Werte innerhalb ±limit werden berücksichtigt).
+    """
     mask = df[col].between(-limit, limit)
     sub = df.loc[mask, ["bin", col]].copy()
     if sub.empty:
         return np.full(len(bins), np.nan, dtype=float)
+
     sub["ok"] = sub[col].between(-window, window)
     grp = sub.groupby("bin")["ok"].agg(total="size", ok="sum")
     pct = (grp["ok"] / grp["total"]) * 100
+
     # Reindex auf bins, fehlende Bins -> NaN
     pct_full = pct.reindex(bins).to_numpy(dtype=float)
     return pct_full
@@ -175,7 +190,6 @@ def load_base64(path):
 # MAIN APP
 # ================================================================
 def main():
-
     # ------------------ Passwortschutz ------------------
     if not check_password():
         return
@@ -185,75 +199,54 @@ def main():
 
     # ------------------ Globales Styling ----------------
     base_css = """
-        <style>
-            .stApp { background-color: #f5f7fb; }
-            .acg-panel {
-                background: #fff;
-                padding: 1.2rem 1.5rem;
-                border-radius: 0.75rem;
-                border: 1px solid #e0e0e0;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-                margin-bottom: 1.2rem;
-            }
-            .acg-muted { color:#666; font-size:0.85rem; }
+    <style>
+      .stApp { background-color: #f5f7fb; }
+      .acg-panel {
+        background: #fff; padding: 1.2rem 1.5rem; border-radius: 0.75rem;
+        border: 1px solid #e0e0e0; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        margin-bottom: 1.2rem;
+      }
+      .acg-muted { color:#666; font-size:0.85rem; }
 
-            /* Header */
-            .acg-header {
-                display:flex;
-                align-items:center;
-                background:#003DA5;
-                padding:20px 30px;
-                border-radius:12px;
-                margin-bottom:35px;
-                color:white;
-            }
-            .acg-header .title {
-                font-size:40px;
-                font-weight:700;
-                color:white;
-            }
-            .acg-header img.logo-desktop {
-                height:120px;
-                margin-right:30px;
-                display:block;
-            }
-            .acg-header img.logo-mobile {
-                height:72px;
-                margin-bottom:10px;
-                display:none;
-            }
+      /* Header */
+      .acg-header {
+        display:flex; align-items:center; background:#003DA5;
+        padding:20px 30px; border-radius:12px; margin-bottom:35px; color:white;
+      }
+      .acg-header .title { font-size:40px; font-weight:700; color:white; }
+      .acg-header img.logo-desktop { height:120px; margin-right:30px; display:block; }
+      .acg-header img.logo-mobile { height:72px; margin-bottom:10px; display:none; }
 
-            /* Footer */
-            .acg-footer {
-                text-align:center;
-                color:#666;
-                font-size:0.85rem;
-                padding:12px 0;
-                margin-top:18px;
-                border-top:1px solid #eee;
-            }
+      /* Footer */
+      .acg-footer {
+        text-align:center; color:#666; font-size:0.85rem;
+        padding:12px 0; margin-top:18px; border-top:1px solid #eee;
+      }
 
-            @media (max-width: 600px) {
-                .acg-header { flex-direction: column; padding:12px; }
-                .acg-header .title { font-size:20px; text-align:center; }
-                .acg-header img.logo-desktop { display:none; }
-                .acg-header img.logo-mobile { display:block; }
-                .acg-panel { padding:0.8rem 0.9rem; margin-bottom:0.8rem; }
-            }
-        </style>
+      @media (max-width: 600px) {
+        .acg-header { flex-direction: column; padding:12px; }
+        .acg-header .title { font-size:20px; text-align:center; }
+        .acg-header img.logo-desktop { display:none; }
+        .acg-header img.logo-mobile { display:block; }
+        .acg-panel { padding:0.8rem 0.9rem; margin-bottom:0.8rem; }
+      }
+    </style>
     """
     st.markdown(base_css, unsafe_allow_html=True)
 
     # Compact overrides (if user toggles)
     if compact:
-        st.markdown("""
+        st.markdown(
+            """
             <style>
-                .acg-panel { padding: 0.6rem 0.8rem !important; margin-bottom:0.6rem !important; }
-                .acg-header { padding:10px 12px !important; }
-                .acg-header .title { font-size:18px !important; }
-                .acg-header img.logo-desktop { height:70px !important; margin-right:12px !important; }
+              .acg-panel { padding: 0.6rem 0.8rem !important; margin-bottom:0.6rem !important; }
+              .acg-header { padding:10px 12px !important; }
+              .acg-header .title { font-size:18px !important; }
+              .acg-header img.logo-desktop { height:70px !important; margin-right:12px !important; }
             </style>
-        """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )
 
     # ------------------ Header + Logo -------------------
     logo_b64 = load_base64("acg_logo.png")
@@ -262,19 +255,25 @@ def main():
     if logo_b64 or logo_small_b64:
         img_desktop = f'<img class="logo-desktop" src="data:image/png;base64,{logo_b64}" alt="logo">' if logo_b64 else ""
         img_mobile = f'<img class="logo-mobile" src="data:image/png;base64,{logo_small_b64 or logo_b64}" alt="logo">' if (logo_small_b64 or logo_b64) else ""
-        st.markdown(f"""
+        st.markdown(
+            f"""
             <div class="acg-header" role="banner">
-                {img_desktop}
-                {img_mobile}
-                <div class="title">CDM Delta Analysis Dashboard</div>
+              {img_desktop}
+              {img_mobile}
+              <div class="title">CDM Delta Analysis Dashboard</div>
             </div>
-        """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )
     else:
-        st.markdown("""
+        st.markdown(
+            """
             <div class="acg-header" role="banner">
-                <div class="title">CDM Delta Analysis Dashboard</div>
+              <div class="title">CDM Delta Analysis Dashboard</div>
             </div>
-        """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )
 
     # ------------------ Daten laden ---------------------
     try:
@@ -287,33 +286,29 @@ def main():
     # ------------------ TIME_MAX Slider -----------------
     with st.container():
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
-        time_max = st.slider(
-            "Maximale Zeit vor ATOT (min)",
-            60, 240, 120, step=5
-        )
+        time_max = st.slider("Maximale Zeit vor ATOT (min)", 60, 240, 120, step=5)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    df = df[(df["Min bis ATOT"] >= TIME_MIN) & (df["Min bis ATOT"] <= time_max)].copy()
+    df = df[(df[COL_MIN_TO_ATOT] >= TIME_MIN) & (df[COL_MIN_TO_ATOT] <= time_max)].copy()
 
-    # ------------------ Statistiken ---------------------
-    etot_stats = compute_stats(df, "Delta - ETOT (min)", DELTA_LIMIT)
-    ctot_stats = compute_stats(df, "Delta - CTOT (min)", DELTA_LIMIT)
-    atc_stats  = compute_stats(df, "Delta - ATC TTOT (min)", DELTA_LIMIT)
+    # ------------------ Statistiken (ABS) ---------------------
+    etot_stats = compute_stats(df, COL_ETOT, DELTA_LIMIT)
+    ctot_stats = compute_stats(df, COL_CTOT, DELTA_LIMIT)
+    atc_stats = compute_stats(df, COL_ATC,  DELTA_LIMIT)
 
     etot_counts = etot_stats["count"]
     ctot_counts = ctot_stats["count"].reindex(etot_stats.index).fillna(0)
     atc_counts  = atc_stats["count"].reindex(etot_stats.index).fillna(0)
 
     ratio_ctot = (ctot_counts / etot_counts.replace(0, np.nan)) * 100
-    ratio_atc = (atc_counts / etot_counts.replace(0, np.nan)) * 100
+    ratio_atc  = (atc_counts  / etot_counts.replace(0, np.nan)) * 100
 
     df_etot = df[
-        df["Delta - ETOT (min)"].notna() &
-        df["Delta - ETOT (min)"].between(-DELTA_LIMIT, DELTA_LIMIT)
+        df[COL_ETOT].notna() &
+        df[COL_ETOT].between(-DELTA_LIMIT, DELTA_LIMIT)
     ]
 
     # ------------------ n= Counts für bin=0 (für alle Panels) ------------------
-    # Panel 1 & 2 (ETOT/CTOT/ATC)
     def n0_from_stats(stats):
         if 0 in stats.index:
             return int(stats.loc[0, "count"])
@@ -326,14 +321,14 @@ def main():
     # Panel 3: Airline-Kategorien (nur bin=0)
     cat_counts0 = (
         df_etot[df_etot["bin"] == 0]
-        .groupby("AirlineCategory")["Delta - ETOT (min)"]
+        .groupby("AirlineCategory")[COL_ETOT]
         .size()
     )
 
     # Panel 4: Runways (nur bin=0)
     rw_counts0 = (
         df_etot[df_etot["bin"] == 0]
-        .groupby("Runway")["Delta - ETOT (min)"]
+        .groupby("Runway")[COL_ETOT]
         .size()
     )
 
@@ -365,7 +360,10 @@ def main():
         ax1.plot(
             etot_stats.index[valid],
             smooth(etot_stats.loc[valid, "mean"]),
-            marker="o", linewidth=2, color=colors["etot"], label="ETOT"
+            marker="o",
+            linewidth=2,
+            color=colors["etot"],
+            label="ETOT (Abs)",
         )
 
     if s_ctot:
@@ -373,7 +371,10 @@ def main():
         ax1.plot(
             ctot_stats.index[valid],
             smooth(ctot_stats.loc[valid, "mean"]),
-            marker="o", linewidth=2, color=colors["ctot"], label="CTOT"
+            marker="o",
+            linewidth=2,
+            color=colors["ctot"],
+            label="CTOT (Abs)",
         )
 
     if s_atc:
@@ -381,7 +382,10 @@ def main():
         ax1.plot(
             atc_stats.index[valid],
             smooth(atc_stats.loc[valid, "mean"]),
-            marker="o", linewidth=2, color=colors["atc"], label="ATC-TTOT"
+            marker="o",
+            linewidth=2,
+            color=colors["atc"],
+            label="ATC-TTOT (Abs)",
         )
 
     # ------------------------------------------------
@@ -428,9 +432,9 @@ def main():
     if not np.isnan(at_start):
         lines.append(f"ATC-TTOT vorhanden bei {at_start:.0f}%")
         lines.append("der Flüge bei ATOT")
-        if thr_bin is not None:
-            lines.append(f"→ ab ca. {thr_bin} min vor ATOT")
-            lines.append("keine verwertbaren ATC-TTOT mehr")
+    if thr_bin is not None:
+        lines.append(f"→ ab ca. {thr_bin} min vor ATOT")
+        lines.append("keine verwertbaren ATC-TTOT mehr")
 
     textstr = "\n".join(lines)
 
@@ -438,11 +442,12 @@ def main():
         boxstyle="round,pad=0.6",
         facecolor="white",
         edgecolor="black",
-        alpha=0.85
+        alpha=0.85,
     )
 
     ax1.text(
-        0.98, 0.05,
+        0.98,
+        0.05,
         textstr,
         transform=ax1.transAxes,
         fontsize=11,
@@ -451,7 +456,6 @@ def main():
         bbox=props,
     )
 
-    # Achsen-/Layout-Einstellungen wie bisher
     ax1.grid(True)
     ax1.legend()
     ax1.set_xlabel("Min vor ATOT")
@@ -468,28 +472,33 @@ def main():
     st.subheader("Panel 2 – Stabilität (± Zeitfenster)")
 
     window = st.slider("Fenster (± Minuten)", 1, 15, 3)
-
     bins = etot_stats.index
-    pct_etot = percent_within_window(df, bins, "Delta - ETOT (min)", window, DELTA_LIMIT)
-    pct_ctot = percent_within_window(df, bins, "Delta - CTOT (min)", window, DELTA_LIMIT)
-    pct_atc = percent_within_window(df, bins, "Delta - ATC TTOT (min)", window, DELTA_LIMIT)
+
+    pct_etot = percent_within_window(df, bins, COL_ETOT, window, DELTA_LIMIT)
+    pct_ctot = percent_within_window(df, bins, COL_CTOT, window, DELTA_LIMIT)
+    pct_atc  = percent_within_window(df, bins, COL_ATC,  window, DELTA_LIMIT)
 
     fig2, ax2 = plt.subplots(figsize=(fig_w, fig_h))
-
     ax2.plot(
-        bins, pct_etot,
-        marker="o", color=colors["etot"],
-        label=f"ETOT ±{window} min (n={n0_etot})"
+        bins,
+        pct_etot,
+        marker="o",
+        color=colors["etot"],
+        label=f"ETOT ±{window} min (n={n0_etot})",
     )
     ax2.plot(
-        bins, pct_ctot,
-        marker="o", color=colors["ctot"],
-        label=f"CTOT ±{window} min (n={n0_ctot})"
+        bins,
+        pct_ctot,
+        marker="o",
+        color=colors["ctot"],
+        label=f"CTOT ±{window} min (n={n0_ctot})",
     )
     ax2.plot(
-        bins, pct_atc,
-        marker="o", color=colors["atc"],
-        label=f"ATC-TTOT ±{window} min (n={n0_atc})"
+        bins,
+        pct_atc,
+        marker="o",
+        color=colors["atc"],
+        label=f"ATC-TTOT ±{window} min (n={n0_atc})",
     )
 
     ax2.set_ylim(0, 100)
@@ -498,6 +507,7 @@ def main():
     ax2.set_xlabel("Min vor ATOT")
     ax2.set_ylabel("Anteil (%)")
     fig2.tight_layout()
+
     st.pyplot(fig2)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -514,7 +524,8 @@ def main():
             show_cat[cat] = st.checkbox(cat, False)
 
     fig3, ax3 = plt.subplots(figsize=(fig_w, fig_h))
-    cat_grp = df_etot.groupby(["bin", "AirlineCategory"])["Delta - ETOT (min)"].mean()
+
+    cat_grp = df_etot.groupby(["bin", "AirlineCategory"])[COL_ETOT].mean()
 
     for cat in CATEGORIES_OF_INTEREST:
         if not show_cat[cat]:
@@ -530,7 +541,7 @@ def main():
             smooth(series),
             marker="o",
             linewidth=2,
-            label=f"{cat} (n={n0_cat})"
+            label=f"{cat} (n={n0_cat})",
         )
 
     ax3.grid(True)
@@ -538,6 +549,7 @@ def main():
     ax3.set_xlabel("Min vor ATOT")
     ax3.set_ylabel("Delta ETOT (min)")
     fig3.tight_layout()
+
     st.pyplot(fig3)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -554,13 +566,15 @@ def main():
             show_rw[rw] = st.checkbox(f"RWY {rw}", False)
 
     fig4, ax4 = plt.subplots(figsize=(fig_w, fig_h))
-    rw_grp = df_etot.groupby(["bin", "Runway"])["Delta - ETOT (min)"].mean()
+
+    rw_grp = df_etot.groupby(["bin", "Runway"])[COL_ETOT].mean()
 
     for rw in RUNWAYS_OF_INTEREST:
         if not show_rw[rw]:
             continue
         if rw not in rw_grp.index.get_level_values(1):
             continue
+
         series = rw_grp.xs(rw, level="Runway")
         n0_rw = int(rw_counts0.get(rw, 0))  # nur bin=0
 
@@ -569,7 +583,7 @@ def main():
             smooth(series),
             marker="o",
             linewidth=2,
-            label=f"RWY {rw} (n={n0_rw})"
+            label=f"RWY {rw} (n={n0_rw})",
         )
 
     ax4.grid(True)
@@ -577,6 +591,7 @@ def main():
     ax4.set_xlabel("Min vor ATOT")
     ax4.set_ylabel("Delta ETOT (min)")
     fig4.tight_layout()
+
     st.pyplot(fig4)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -588,12 +603,16 @@ def main():
 
     summary = pd.DataFrame({
         "bin": etot_stats.index,
+
         "ETOT_mean": etot_stats["mean"],
         "ETOT_count": etot_stats["count"],
+
         "CTOT_mean": ctot_stats["mean"].reindex(etot_stats.index),
         "CTOT_count": ctot_stats["count"].reindex(etot_stats.index),
+
         "ATC_mean": atc_stats["mean"].reindex(etot_stats.index),
         "ATC_count": atc_stats["count"].reindex(etot_stats.index),
+
         "CTOT_ETOT_ratio_%": ratio_ctot,
         "ATC_ETOT_ratio_%": ratio_atc,
     })
@@ -606,19 +625,23 @@ def main():
         "Excel-Summary herunterladen",
         data=output.getvalue(),
         file_name="summary.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
     # Footer
     # ================================================================
-    st.markdown(f"""
+    st.markdown(
+        f"""
         <div class="acg-footer" role="contentinfo">
-            <div>© DZ · Stand: {loaded_at}</div>
-            <div class="acg-muted">Datenquelle: B2B CDM Daten von 10.-23.11.2025</div>
+          <div>© DZ · Stand: {loaded_at}</div>
+          <div class="acg-muted">Datenquelle: B2B CDM Daten von 10.-23.11.2025</div>
         </div>
-    """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ================================================================
