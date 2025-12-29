@@ -245,7 +245,6 @@ def add_mean_series(fig, stats, label, color, min_count, show_std):
         upper = m + sd
         lower = m - sd
 
-        # leichter Farbstich passend zur Linie
         fill_rgba = hex_to_rgba(color, alpha=0.10)
 
         fig.add_trace(
@@ -454,7 +453,7 @@ def main():
             add_mean_series(fig, atc_stats, "ATC-TTOT (Abs)", colors["atc"], MIN_COUNT, show_std)
 
         fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "Delta (min)"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="tab1_plot")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
@@ -496,11 +495,11 @@ def main():
 
         fig.update_yaxes(range=[0, 100])
         fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "Anteil (%)"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="tab2_plot")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # TAB 3 – Airline Kategorien (Plotly Hover)
+    # TAB 3 – Airline Kategorien (Plotly Hover) + Hinweis wenn nichts ausgewählt
     # ================================================================
     with tab3:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
@@ -512,17 +511,17 @@ def main():
             with cols[i]:
                 show_cat[cat] = st.checkbox(cat, False, key=f"p3_cat_{cat}")
 
-        # Gruppierung
         cat_grp = df_etot.groupby(["bin", "AirlineCategory"])[COL_ETOT].mean()
-
         fig = go.Figure()
 
+        any_selected = False
         for cat in CATEGORIES_OF_INTEREST:
             if not show_cat.get(cat, False):
                 continue
             if cat not in cat_grp.index.get_level_values(1):
                 continue
 
+            any_selected = True
             series = cat_grp.xs(cat, level="AirlineCategory").sort_index()
             x = series.index.to_numpy()
             y = smooth(series).to_numpy()
@@ -545,11 +544,21 @@ def main():
             )
 
         fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "Delta ETOT (min)"))
-        st.plotly_chart(fig, use_container_width=True)
+
+        if not any_selected:
+            fig.add_annotation(
+                text="Bitte mindestens eine Airline-Kategorie auswählen.",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False,
+                font=dict(size=14, color="gray"),
+            )
+
+        st.plotly_chart(fig, use_container_width=True, key="tab3_plot")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # TAB 4 – Runways (Plotly Hover)
+    # TAB 4 – Runways (Plotly Hover) + Hinweis wenn nichts ausgewählt
     # ================================================================
     with tab4:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
@@ -562,15 +571,16 @@ def main():
                 show_rw[rw] = st.checkbox(f"RWY {rw}", False, key=f"p4_rw_{rw}")
 
         rw_grp = df_etot.groupby(["bin", "Runway"])[COL_ETOT].mean()
-
         fig = go.Figure()
 
+        any_selected = False
         for rw in RUNWAYS_OF_INTEREST:
             if not show_rw.get(rw, False):
                 continue
             if rw not in rw_grp.index.get_level_values(1):
                 continue
 
+            any_selected = True
             series = rw_grp.xs(rw, level="Runway").sort_index()
             x = series.index.to_numpy()
             y = smooth(series).to_numpy()
@@ -593,7 +603,17 @@ def main():
             )
 
         fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "Delta ETOT (min)"))
-        st.plotly_chart(fig, use_container_width=True)
+
+        if not any_selected:
+            fig.add_annotation(
+                text="Bitte mindestens eine Runway auswählen.",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False,
+                font=dict(size=14, color="gray"),
+            )
+
+        st.plotly_chart(fig, use_container_width=True, key="tab4_plot")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
@@ -614,9 +634,6 @@ def main():
         show_mean_bias = st.checkbox("Mean Bias anzeigen (vertikale Linie)", True, key="p5_meanbias")
         hist_bin_width = st.slider("Histogramm-Breite (min)", 1, 10, 2, step=1, key="p5_bw")
 
-        # Bin edges
-        bins_edges = np.arange(-HIST_LIMIT, HIST_LIMIT + hist_bin_width, hist_bin_width)
-
         fig = go.Figure()
 
         def add_hist(col, name, color):
@@ -625,7 +642,6 @@ def main():
             if s.empty:
                 return
 
-            # Outlier cut (innerhalb Fenster)
             low, high = np.percentile(s, [1, 99])
             s = s[(s >= low) & (s <= high)]
             if s.empty:
@@ -659,7 +675,6 @@ def main():
         if h_atc:
             add_hist(COL_ATC_S, "ATC-TTOT", colors["atc"])
 
-        # Captions
         cap_left, cap_mid, cap_right = st.columns([1, 2, 1])
         with cap_left:
             st.caption("⬅️ **zu früh gestartet** (positiver Delta)")
@@ -669,11 +684,10 @@ def main():
             st.caption("➡️ **zu spät gestartet** (negativer Delta)")
 
         fig.update_layout(**_plotly_layout(compact, "DeltaSigned (min)  ⟵ zu früh | zu spät ⟶", "Dichte", height_big=520, height_small=420))
-        # "drehen": positive links, negative rechts
         fig.update_xaxes(autorange="reversed", range=[HIST_LIMIT, -HIST_LIMIT])
         fig.add_vline(x=0, line_width=1, line_color="black")
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="tab5_plot")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
