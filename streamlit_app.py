@@ -552,6 +552,9 @@ def main():
         with c3:
             h_atc = st.checkbox("ATC-TTOT (Signed) anzeigen", False, key="p5_atc")
 
+        # NEW: Mean-Bias Linien Toggle
+        show_mean_bias = st.checkbox("Mean Bias anzeigen (vertikale Linie)", True, key="p5_meanbias")
+
         hist_bin_width = st.slider("Histogramm-Breite (min)", 1, 10, 2, step=1, key="p5_bw")
         hist_limit = st.slider("Anzeige-Limit (± min)", 30, 180, 120, step=10, key="p5_lim")
 
@@ -559,27 +562,33 @@ def main():
 
         fig5, ax5 = plt.subplots(figsize=(fig_w, fig_h))
 
-        def plot_hist(col, label, color):
+        def plot_hist_with_mean(col, label, color, mean_linestyle="--"):
             s = df[col].dropna()
             s = s[(s >= -hist_limit) & (s <= hist_limit)]
             if len(s) == 0:
                 return
+
+            mu = float(s.mean())
+
             ax5.hist(
                 s,
                 bins=bins_hist,
                 alpha=0.45,
                 density=True,
-                label=f"{label} (n={len(s)})",
+                label=f"{label} (n={len(s)}, μ={mu:.2f})" if show_mean_bias else f"{label} (n={len(s)})",
                 color=color,
                 edgecolor="none",
             )
 
+            if show_mean_bias:
+                ax5.axvline(mu, linestyle=mean_linestyle, linewidth=2, color=color)
+
         if h_etot:
-            plot_hist(COL_ETOT_S, "ETOT", colors["etot"])
+            plot_hist_with_mean(COL_ETOT_S, "ETOT", colors["etot"])
         if h_ctot:
-            plot_hist(COL_CTOT_S, "CTOT", colors["ctot"])
+            plot_hist_with_mean(COL_CTOT_S, "CTOT", colors["ctot"])
         if h_atc:
-            plot_hist(COL_ATC_S, "ATC-TTOT", colors["atc"])
+            plot_hist_with_mean(COL_ATC_S, "ATC-TTOT", colors["atc"])
 
         ax5.axvline(0, linewidth=1)
         ax5.grid(True)
