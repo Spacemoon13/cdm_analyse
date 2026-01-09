@@ -393,27 +393,29 @@ def main():
     ctot_stats = compute_stats(df, COL_CTOT, DELTA_LIMIT)
     atc_stats = compute_stats(df, COL_ATC, DELTA_LIMIT)
 
-    def compute_signed_stats(data, col, limit, sign):
-        mask = data[col].notna() & data[col].between(-limit, limit)
+    def compute_signed_stats(data, col, limit, sign, invert_sign=False):
+        series = -data[col] if invert_sign else data[col]
+        mask = series.notna() & series.between(-limit, limit)
         if sign == "le":
-            mask &= data[col] <= 0
+            mask &= series <= 0
         elif sign == "ge":
-            mask &= data[col] >= 0
+            mask &= series >= 0
         else:
             raise ValueError("sign must be 'le' or 'ge'")
-        sub = data[mask]
+        sub = data.loc[mask].copy()
+        sub["_signed"] = series.loc[mask]
         return (
-            sub.groupby("bin")[col]
+            sub.groupby("bin")["_signed"]
             .agg(mean="mean", std="std", count="count")
             .sort_index()
         )
 
-    etot_stats_le = compute_signed_stats(df, COL_ETOT_S, DELTA_LIMIT, "le")
-    etot_stats_ge = compute_signed_stats(df, COL_ETOT_S, DELTA_LIMIT, "ge")
-    ctot_stats_le = compute_signed_stats(df, COL_CTOT_S, DELTA_LIMIT, "le")
-    ctot_stats_ge = compute_signed_stats(df, COL_CTOT_S, DELTA_LIMIT, "ge")
-    atc_stats_le = compute_signed_stats(df, COL_ATC_S, DELTA_LIMIT, "le")
-    atc_stats_ge = compute_signed_stats(df, COL_ATC_S, DELTA_LIMIT, "ge")
+    etot_stats_le = compute_signed_stats(df, COL_ETOT_S, DELTA_LIMIT, "le", invert_sign=True)
+    etot_stats_ge = compute_signed_stats(df, COL_ETOT_S, DELTA_LIMIT, "ge", invert_sign=True)
+    ctot_stats_le = compute_signed_stats(df, COL_CTOT_S, DELTA_LIMIT, "le", invert_sign=True)
+    ctot_stats_ge = compute_signed_stats(df, COL_CTOT_S, DELTA_LIMIT, "ge", invert_sign=True)
+    atc_stats_le = compute_signed_stats(df, COL_ATC_S, DELTA_LIMIT, "le", invert_sign=True)
+    atc_stats_ge = compute_signed_stats(df, COL_ATC_S, DELTA_LIMIT, "ge", invert_sign=True)
 
     etot_counts = etot_stats["count"]
     ctot_counts = ctot_stats["count"].reindex(etot_stats.index).fillna(0)
@@ -756,9 +758,6 @@ def main():
             st.markdown("</div>", unsafe_allow_html=True)
 
     # ================================================================
-    # TAB 6 – Export
-    # ================================================================
-    # ================================================================
     # TAB 6 - Mean <=0 / >=0 (Signed)
     # ================================================================
     with tab6:
@@ -778,14 +777,14 @@ def main():
         fig = go.Figure()
 
         if s_etot:
-            add_mean_series(fig, etot_stats_le, "ETOT (<=0)", colors["etot"], MIN_COUNT, show_std, line_dash="dash")
-            add_mean_series(fig, etot_stats_ge, "ETOT (>=0)", colors["etot"], MIN_COUNT, show_std, line_dash="solid")
+            add_mean_series(fig, etot_stats_le, "ETOT (-, zu frueh)", colors["etot"], MIN_COUNT, show_std, line_dash="dash")
+            add_mean_series(fig, etot_stats_ge, "ETOT (+, verspaetet)", colors["etot"], MIN_COUNT, show_std, line_dash="solid")
         if s_ctot:
-            add_mean_series(fig, ctot_stats_le, "CTOT (<=0)", colors["ctot"], MIN_COUNT, show_std, line_dash="dash")
-            add_mean_series(fig, ctot_stats_ge, "CTOT (>=0)", colors["ctot"], MIN_COUNT, show_std, line_dash="solid")
+            add_mean_series(fig, ctot_stats_le, "CTOT (-, zu frueh)", colors["ctot"], MIN_COUNT, show_std, line_dash="dash")
+            add_mean_series(fig, ctot_stats_ge, "CTOT (+, verspaetet)", colors["ctot"], MIN_COUNT, show_std, line_dash="solid")
         if s_atc:
-            add_mean_series(fig, atc_stats_le, "ATC-TTOT (<=0)", colors["atc"], MIN_COUNT, show_std, line_dash="dash")
-            add_mean_series(fig, atc_stats_ge, "ATC-TTOT (>=0)", colors["atc"], MIN_COUNT, show_std, line_dash="solid")
+            add_mean_series(fig, atc_stats_le, "ATC-TTOT (-, zu frueh)", colors["atc"], MIN_COUNT, show_std, line_dash="dash")
+            add_mean_series(fig, atc_stats_ge, "ATC-TTOT (+, verspaetet)", colors["atc"], MIN_COUNT, show_std, line_dash="solid")
 
         fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "DeltaSigned (min)"))
         st.plotly_chart(fig, use_container_width=True, key="tab6_plot")
