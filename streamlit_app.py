@@ -210,7 +210,7 @@ def _plotly_layout(compact, x_title, y_title, height_big=520, height_small=380):
     )
 
 
-def add_mean_series(fig, stats, label, color, min_count, show_std):
+def add_mean_series(fig, stats, label, color, min_count, show_std, line_dash="solid"):
     valid = stats["count"] >= min_count
     if valid.sum() == 0:
         return
@@ -228,7 +228,7 @@ def add_mean_series(fig, stats, label, color, min_count, show_std):
             y=m,
             mode="lines+markers",
             name=label,
-            line=dict(color=color, width=2),
+            line=dict(color=color, width=2, dash=line_dash),
             marker=dict(size=6),
             customdata=customdata,
             hovertemplate=(
@@ -393,6 +393,28 @@ def main():
     ctot_stats = compute_stats(df, COL_CTOT, DELTA_LIMIT)
     atc_stats = compute_stats(df, COL_ATC, DELTA_LIMIT)
 
+    def compute_signed_stats(data, col, limit, sign):
+        mask = data[col].notna() & data[col].between(-limit, limit)
+        if sign == "le":
+            mask &= data[col] <= 0
+        elif sign == "ge":
+            mask &= data[col] >= 0
+        else:
+            raise ValueError("sign must be 'le' or 'ge'")
+        sub = data[mask]
+        return (
+            sub.groupby("bin")[col]
+            .agg(mean="mean", std="std", count="count")
+            .sort_index()
+        )
+
+    etot_stats_le = compute_signed_stats(df, COL_ETOT_S, DELTA_LIMIT, "le")
+    etot_stats_ge = compute_signed_stats(df, COL_ETOT_S, DELTA_LIMIT, "ge")
+    ctot_stats_le = compute_signed_stats(df, COL_CTOT_S, DELTA_LIMIT, "le")
+    ctot_stats_ge = compute_signed_stats(df, COL_CTOT_S, DELTA_LIMIT, "ge")
+    atc_stats_le = compute_signed_stats(df, COL_ATC_S, DELTA_LIMIT, "le")
+    atc_stats_ge = compute_signed_stats(df, COL_ATC_S, DELTA_LIMIT, "ge")
+
     etot_counts = etot_stats["count"]
     ctot_counts = ctot_stats["count"].reindex(etot_stats.index).fillna(0)
     atc_counts = atc_stats["count"].reindex(etot_stats.index).fillna(0)
@@ -417,12 +439,13 @@ def main():
     # ================================================================
     # TABS (Variante A)
     # ================================================================
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Panel 1 – Mean",
         "Panel 2 – Stabilität",
         "Panel 3 – Airlines",
         "Panel 4 – Runways",
         "Panel 5 – Histogramm",
+        "Panel 6 - Mean <=0 / >=0",
         "Export",
     ])
 
@@ -735,7 +758,40 @@ def main():
     # ================================================================
     # TAB 6 – Export
     # ================================================================
+    # ================================================================
+    # TAB 6 - Mean <=0 / >=0 (Signed)
+    # ================================================================
     with tab6:
+        st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
+        st.subheader("Panel 6 - Mean <=0 / >=0 (Signed Deltas)")
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            s_etot = st.checkbox("ETOT anzeigen", key="p6_etot")
+        with c2:
+            s_ctot = st.checkbox("CTOT anzeigen", key="p6_ctot")
+        with c3:
+            s_atc = st.checkbox("ATC-TTOT anzeigen", key="p6_atc")
+        with c4:
+            show_std = st.checkbox("¶ñ1ØŸ anzeigen", True, key="p6_std")
+
+        fig = go.Figure()
+
+        if s_etot:
+            add_mean_series(fig, etot_stats_le, "ETOT (<=0)", colors["etot"], MIN_COUNT, show_std, line_dash="dash")
+            add_mean_series(fig, etot_stats_ge, "ETOT (>=0)", colors["etot"], MIN_COUNT, show_std, line_dash="solid")
+        if s_ctot:
+            add_mean_series(fig, ctot_stats_le, "CTOT (<=0)", colors["ctot"], MIN_COUNT, show_std, line_dash="dash")
+            add_mean_series(fig, ctot_stats_ge, "CTOT (>=0)", colors["ctot"], MIN_COUNT, show_std, line_dash="solid")
+        if s_atc:
+            add_mean_series(fig, atc_stats_le, "ATC-TTOT (<=0)", colors["atc"], MIN_COUNT, show_std, line_dash="dash")
+            add_mean_series(fig, atc_stats_ge, "ATC-TTOT (>=0)", colors["atc"], MIN_COUNT, show_std, line_dash="solid")
+
+        fig.update_layout(**_plotly_layout(compact, "Min vor ATOT", "DeltaSigned (min)"))
+        st.plotly_chart(fig, use_container_width=True, key="tab6_plot")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with tab7:
         st.markdown('<div class="acg-panel">', unsafe_allow_html=True)
         st.subheader("Excel Export – Summary")
 
